@@ -794,6 +794,7 @@ dependencies = [
  "humantime",
  "indicatif",
  "jwalk",
+ "libc",
  "memmap2",
  "rayon",
  "rcgen",

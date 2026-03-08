@@ -4,7 +4,7 @@
 //! and first-match-wins rule ordering identical to rsync's `--exclude`/`--include`.
 
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Whether a rule includes or excludes matched paths.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -69,12 +69,27 @@ impl FilterEngine {
         excludes: &[String],
         includes: &[String],
         exclude_files: &[PathBuf],
+        include_files: &[PathBuf],
     ) -> anyhow::Result<Self> {
         let mut rules = Vec::new();
 
         // Includes first — gives them higher priority (first-match-wins).
         for pat in includes {
             rules.push(FilterRule::parse(pat, FilterKind::Include));
+        }
+
+        // Then file-sourced includes.
+        for path in include_files {
+            let content = fs::read_to_string(path).map_err(|e| {
+                anyhow::anyhow!("failed to read include-from file {}: {}", path.display(), e)
+            })?;
+            for line in content.lines() {
+                let line = line.trim();
+                if line.is_empty() || line.starts_with('#') {
+                    continue;
+                }
+                rules.push(FilterRule::parse(line, FilterKind::Include));
+            }
         }
 
         // Then explicit excludes.
@@ -599,8 +614,6 @@ impl std::fmt::Display for ItemizedChange {
 }
 
 // ── Backup helper ────────────────────────────────────────────────────────────
-
-use std::path::PathBuf;
 
 /// Create a backup of `target` before it is overwritten.
 ///

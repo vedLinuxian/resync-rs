@@ -68,6 +68,9 @@ bytesize = "1"
 # Duration formatting
 humantime = "2"
 
+# Platform-specific syscalls (copy_file_range, madvise, chown)
+libc = "0.2"
+
 [profile.release]
 opt-level     = 3
 lto           = "fat"

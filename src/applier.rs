@@ -7,11 +7,19 @@
 //!  1. Create a temp file with a unique name (PID + thread ID + counter).
 //!  2. For each [`DeltaOp::Copy`]: copy the chunk from the existing `dst`.
 //!  3. For each [`DeltaOp::Write`]: copy the chunk from `src`.
-//!  4. `fsync` and rename into place.
-//!  5. On error: clean up the temp file.
+//!  4. Optionally `fsync` (only when `--fsync` is set).
+//!  5. Rename into place.
+//!  6. On error: clean up the temp file.
+//!
+//!  Performance features:
+//!  - copy_file_range() zero-copy for new files on Linux
+//!  - madvise(MADV_SEQUENTIAL) on mmap'd files
+//!  - 256 KB BufWriter to reduce write(2) syscalls by 32x
+//!  - No fsync by default (configurable with --fsync)
+//!  - Owner/group preservation via libc::fchown
 
 use std::fs::{self, File, OpenOptions};
-use std::io::{BufWriter, Read, Write};
+use std::io::{BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -68,20 +76,123 @@ fn temp_path_for(dst_path: &Path) -> PathBuf {
     dst_path.with_file_name(tmp_name)
 }
 
+// ─── Platform-specific: copy_file_range ──────────────────────────────────────
+
+/// Zero-copy file copy using Linux's copy_file_range(2) syscall.
+/// Falls back to std::fs::copy on non-Linux or on failure.
+#[cfg(target_os = "linux")]
+fn copy_file_range_all(src_path: &Path, dst_path: &Path) -> std::io::Result<u64> {
+    use std::os::unix::io::AsRawFd;
+
+    let src_file = File::open(src_path)?;
+    let src_size = src_file.metadata()?.len();
+
+    let dst_file = OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(dst_path)?;
+
+    let src_fd = src_file.as_raw_fd();
+    let dst_fd = dst_file.as_raw_fd();
+
+    let mut total_copied: u64 = 0;
+    let mut src_off: i64 = 0;
+    let mut dst_off: i64 = 0;
+
+    while total_copied < src_size {
+        let remaining = (src_size - total_copied) as usize;
+        // Copy in 128 MB chunks to avoid holding kernel resources too long
+        let chunk = remaining.min(128 * 1024 * 1024);
+
+        let ret = unsafe {
+            libc::copy_file_range(
+                src_fd,
+                &mut src_off,
+                dst_fd,
+                &mut dst_off,
+                chunk,
+                0, // flags (must be 0)
+            )
+        };
+
+        if ret < 0 {
+            let err = std::io::Error::last_os_error();
+            if err.raw_os_error() == Some(libc::EXDEV)
+                || err.raw_os_error() == Some(libc::ENOSYS)
+                || err.raw_os_error() == Some(libc::EINVAL)
+            {
+                // Fallback: kernel doesn't support it for this fs combination
+                // Re-do from scratch with std::fs::copy
+                drop(src_file);
+                drop(dst_file);
+                return fs::copy(src_path, dst_path);
+            }
+            return Err(err);
+        }
+        if ret == 0 {
+            break; // EOF
+        }
+        total_copied += ret as u64;
+    }
+
+    Ok(total_copied)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn copy_file_range_all(src_path: &Path, dst_path: &Path) -> std::io::Result<u64> {
+    fs::copy(src_path, dst_path)
+}
+
+// ─── Platform-specific: madvise ──────────────────────────────────────────────
+
+/// Advise kernel on mmap usage pattern for better readahead.
+#[cfg(target_os = "linux")]
+fn madvise_sequential(mmap: &Mmap) {
+    unsafe {
+        libc::madvise(
+            mmap.as_ptr() as *mut libc::c_void,
+            mmap.len(),
+            libc::MADV_SEQUENTIAL,
+        );
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn madvise_sequential(_mmap: &Mmap) {
+    // No-op on non-Linux
+}
+
 // ─── Applier ─────────────────────────────────────────────────────────────────
 
 pub struct Applier {
     pub preserve_perms: bool,
     pub preserve_times: bool,
+    pub preserve_owner: bool,
+    pub preserve_group: bool,
     pub dry_run: bool,
+    pub fsync: bool,
+    pub inplace: bool,
 }
 
 impl Applier {
-    pub fn new(preserve_perms: bool, preserve_times: bool, dry_run: bool) -> Self {
+    pub fn new(
+        preserve_perms: bool,
+        preserve_times: bool,
+        preserve_owner: bool,
+        preserve_group: bool,
+        dry_run: bool,
+        fsync: bool,
+        inplace: bool,
+    ) -> Self {
         Self {
             preserve_perms,
             preserve_times,
+            preserve_owner,
+            preserve_group,
             dry_run,
+            fsync,
+            inplace,
         }
     }
 
@@ -121,8 +232,6 @@ impl Applier {
         let src_data = self.read_file_data(src_path)?;
 
         // Read destination data if it exists (for Copy ops)
-        // BUG FIX #10: If delta has Copy ops but dst doesn't exist or is
-        // unreadable, that's an error — not a silent skip.
         let dst_data: Option<FileData> = if dst_path.exists() {
             Some(self.read_file_data(dst_path)?)
         } else {
@@ -141,10 +250,14 @@ impl Applier {
             )));
         }
 
-        // BUG FIX #1: Unique temp file path per file
-        let tmp_path = temp_path_for(dst_path);
+        // ── --inplace mode: write directly to destination ────────────────
+        if self.inplace {
+            let dst_slice: Option<&[u8]> = dst_data.as_deref();
+            return self.write_delta_inplace(dst_path, &src_data, dst_slice, delta, src_entry);
+        }
 
-        // BUG FIX #17: Ensure temp file is cleaned up on any error
+        // ── Standard mode: temp file + atomic rename ─────────────────────
+        let tmp_path = temp_path_for(dst_path);
         let dst_slice: Option<&[u8]> = dst_data.as_deref();
         match self.write_delta(&tmp_path, &src_data, dst_slice, delta) {
             Ok(bytes_written) => {
@@ -183,7 +296,7 @@ impl Applier {
             })?;
 
         // PERF FIX: 256 KB buffer instead of default 8 KB — reduces
-        // write(2) syscall count by 32× for large files.
+        // write(2) syscall count by 32x for large files.
         let mut writer = BufWriter::with_capacity(256 * 1024, &tmp_file);
         let mut bytes_written: u64 = 0;
 
@@ -246,25 +359,96 @@ impl Applier {
         })?;
         drop(writer);
 
-        // fsync for durability before rename
-        tmp_file.sync_data().map_err(|e| ResyncError::Io {
-            path: tmp_path.display().to_string(),
-            source: e,
-        })?;
+        // Only fsync when explicitly requested (massive perf win for many small files)
+        if self.fsync {
+            tmp_file.sync_data().map_err(|e| ResyncError::Io {
+                path: tmp_path.display().to_string(),
+                source: e,
+            })?;
+        }
 
         Ok(bytes_written)
     }
 
+    /// Write delta directly to destination file (--inplace mode).
+    /// Faster but not crash-safe: a power failure mid-write leaves a corrupt file.
+    fn write_delta_inplace(
+        &self,
+        dst_path: &Path,
+        src_data: &[u8],
+        _dst_data: Option<&[u8]>,
+        delta: &FileDelta,
+        src_entry: &FileEntry,
+    ) -> Result<u64> {
+        let file = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .open(dst_path)
+            .map_err(|e| ResyncError::Io {
+                path: dst_path.display().to_string(),
+                source: e,
+            })?;
+
+        // Set the final file size first
+        file.set_len(delta.final_size).map_err(|e| ResyncError::Io {
+            path: dst_path.display().to_string(),
+            source: e,
+        })?;
+
+        let mut writer = BufWriter::with_capacity(256 * 1024, &file);
+        let mut bytes_written: u64 = 0;
+        let mut current_offset: u64 = 0;
+
+        for op in &delta.ops {
+            match op {
+                DeltaOp::Copy { src_offset: _, len } => {
+                    // For inplace, Copy ops reference data already in dst at the right offset
+                    // We skip over them (they're already in place)
+                    current_offset += *len as u64;
+                    writer.seek(SeekFrom::Start(current_offset)).ok();
+                }
+                DeltaOp::Write { src_offset, len } => {
+                    let start = *src_offset as usize;
+                    let end = start + len;
+                    if end > src_data.len() {
+                        return Err(ResyncError::DeltaApplyFailed(format!(
+                            "Write op references offset {}..{} but src is only {} bytes",
+                            start, end, src_data.len()
+                        )));
+                    }
+                    writer.seek(SeekFrom::Start(current_offset)).map_err(|e| ResyncError::Io {
+                        path: dst_path.display().to_string(),
+                        source: e,
+                    })?;
+                    writer.write_all(&src_data[start..end]).map_err(|e| ResyncError::Io {
+                        path: dst_path.display().to_string(),
+                        source: e,
+                    })?;
+                    bytes_written += *len as u64;
+                    current_offset += *len as u64;
+                }
+            }
+        }
+
+        writer.flush().map_err(|e| ResyncError::Io {
+            path: dst_path.display().to_string(),
+            source: e,
+        })?;
+        drop(writer);
+
+        if self.fsync {
+            file.sync_data().map_err(|e| ResyncError::Io {
+                path: dst_path.display().to_string(),
+                source: e,
+            })?;
+        }
+
+        self.apply_metadata(dst_path, src_entry)?;
+        Ok(bytes_written)
+    }
+
     /// Read file data, using zero-copy mmap for large files and read() for
-    /// small ones.
-    ///
-    /// PERF FIX: Previously called `mmap.to_vec()` which heap-copied the
-    /// entire file, doubling RAM and wasting CPU.  Now returns a `FileData`
-    /// enum that dereferences to `&[u8]` — mmap stays zero-copy.
-    ///
-    /// On Linux, the mmap stays valid even after the source inode is renamed
-    /// or unlinked (kernel keeps the page cache alive as long as any mapping
-    /// exists), so holding the mmap across backup-rename is safe.
+    /// small ones.  Applies madvise(MADV_SEQUENTIAL) on Linux for readahead.
     fn read_file_data(&self, path: &Path) -> Result<FileData> {
         let file = File::open(path).map_err(|e| ResyncError::Io {
             path: path.display().to_string(),
@@ -288,6 +472,8 @@ impl Applier {
                     source: e,
                 })?
             };
+            // PERF FIX: Hint to kernel that we'll read sequentially
+            madvise_sequential(&mmap);
             Ok(FileData::Mmap(mmap))
         } else {
             let mut buf = vec![0u8; size];
@@ -308,7 +494,6 @@ impl Applier {
                 source: e,
             })?;
         }
-        // Create or truncate
         File::create(dst_path).map_err(|e| ResyncError::Io {
             path: dst_path.display().to_string(),
             source: e,
@@ -319,7 +504,9 @@ impl Applier {
 
     /// Fully copy a file atomically (shortcut when no destination exists yet).
     ///
-    /// BUG FIX #8: Now uses temp file + rename for crash safety, same as apply().
+    /// PERF FIX: Uses copy_file_range(2) on Linux for zero-copy kernel-space
+    /// file duplication. Data never enters userspace. Falls back to std::fs::copy
+    /// on other platforms or unsupported filesystem combinations.
     pub fn copy_new(&self, src_path: &Path, dst_path: &Path, src_entry: &FileEntry) -> Result<u64> {
         if self.dry_run {
             return Ok(src_entry.size);
@@ -340,10 +527,15 @@ impl Applier {
             return self.write_empty_file(dst_path, src_entry);
         }
 
-        // BUG FIX #8: Atomic copy via temp file
+        // Atomic copy via temp file + zero-copy on Linux
         let tmp_path = temp_path_for(dst_path);
-        match fs::copy(src_path, &tmp_path) {
+        match copy_file_range_all(src_path, &tmp_path) {
             Ok(_) => {
+                if self.fsync {
+                    if let Ok(f) = File::open(&tmp_path) {
+                        f.sync_data().ok();
+                    }
+                }
                 fs::rename(&tmp_path, dst_path).map_err(|e| ResyncError::Io {
                     path: dst_path.display().to_string(),
                     source: e,
@@ -390,6 +582,8 @@ impl Applier {
     fn apply_metadata(&self, dst_path: &Path, src: &FileEntry) -> Result<()> {
         #[cfg(unix)]
         {
+            use std::os::unix::fs::MetadataExt;
+
             if self.preserve_perms {
                 let perms = fs::Permissions::from_mode(src.mode & 0o7777);
                 fs::set_permissions(dst_path, perms).map_err(|e| ResyncError::Io {
@@ -397,10 +591,67 @@ impl Applier {
                     source: e,
                 })?;
             }
+
             if self.preserve_times {
                 if let Ok(file) = fs::OpenOptions::new().write(true).open(dst_path) {
                     if let Err(e) = file.set_modified(src.modified) {
                         warn!("failed to set mtime on {}: {e}", dst_path.display());
+                    }
+                }
+            }
+
+            // Owner/group preservation via libc::chown
+            if self.preserve_owner || self.preserve_group {
+                if let Ok(dst_meta) = fs::metadata(dst_path) {
+                    let src_uid = if self.preserve_owner {
+                        // We need the original uid from the source file
+                        fs::metadata(&src.abs_path)
+                            .ok()
+                            .map(|m| m.uid())
+                            .unwrap_or(u32::MAX) // -1 means "don't change"
+                    } else {
+                        u32::MAX
+                    };
+
+                    let src_gid = if self.preserve_group {
+                        fs::metadata(&src.abs_path)
+                            .ok()
+                            .map(|m| m.gid())
+                            .unwrap_or(u32::MAX)
+                    } else {
+                        u32::MAX
+                    };
+
+                    let dst_uid = dst_meta.uid();
+                    let dst_gid = dst_meta.gid();
+
+                    let new_uid = if self.preserve_owner && src_uid != u32::MAX {
+                        src_uid
+                    } else {
+                        dst_uid
+                    };
+                    let new_gid = if self.preserve_group && src_gid != u32::MAX {
+                        src_gid
+                    } else {
+                        dst_gid
+                    };
+
+                    if new_uid != dst_uid || new_gid != dst_gid {
+                        use std::ffi::CString;
+                        if let Ok(c_path) = CString::new(dst_path.to_string_lossy().as_bytes()) {
+                            let ret = unsafe {
+                                libc::chown(c_path.as_ptr(), new_uid, new_gid)
+                            };
+                            if ret != 0 {
+                                warn!(
+                                    "chown failed for {} (uid={}, gid={}): {}",
+                                    dst_path.display(),
+                                    new_uid,
+                                    new_gid,
+                                    std::io::Error::last_os_error()
+                                );
+                            }
+                        }
                     }
                 }
             }

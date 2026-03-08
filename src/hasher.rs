@@ -3,6 +3,12 @@
 //! Files are memory-mapped via `memmap2` so the kernel can page data in
 //! on demand without explicit `read()` calls.  Each chunk is then hashed
 //! with `blake3` which automatically uses AVX-512 / NEON when available.
+//!
+//! Performance features:
+//! - madvise(MADV_SEQUENTIAL | MADV_WILLNEED) for kernel readahead
+//! - Adaptive parallelism: sequential for < 2 MB, batched rayon for >= 2 MB
+//! - 128 chunks per rayon task to amortize scheduling overhead
+//! - Small file fast-path (< 8 KB): buffered read instead of mmap
 
 use std::fs::File;
 use std::io::Read;
@@ -17,7 +23,7 @@ use crate::error::{Result, ResyncError};
 
 // ─── Data model ──────────────────────────────────────────────────────────────
 
-/// A 32-byte BLAKE3 digest (256-bit — collision probability ≈ 2⁻²⁵⁶).
+/// A 32-byte BLAKE3 digest (256-bit — collision probability ~ 2^-256).
 pub type Hash256 = [u8; 32];
 
 /// Metadata for one fixed-size chunk of a file.
@@ -84,6 +90,34 @@ impl FileManifest {
     }
 }
 
+// ─── Platform-specific: madvise ──────────────────────────────────────────────
+
+/// Advise kernel on mmap usage pattern for sequential readahead + prefault.
+#[cfg(target_os = "linux")]
+fn madvise_for_hashing(mmap: &Mmap) {
+    unsafe {
+        // Tell kernel we'll read sequentially — enables aggressive readahead
+        libc::madvise(
+            mmap.as_ptr() as *mut libc::c_void,
+            mmap.len(),
+            libc::MADV_SEQUENTIAL,
+        );
+        // Pre-fault pages for files up to 256 MB
+        if mmap.len() <= 256 * 1024 * 1024 {
+            libc::madvise(
+                mmap.as_ptr() as *mut libc::c_void,
+                mmap.len(),
+                libc::MADV_WILLNEED,
+            );
+        }
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn madvise_for_hashing(_mmap: &Mmap) {
+    // No-op on non-Linux
+}
+
 // ─── Hasher ──────────────────────────────────────────────────────────────────
 
 pub struct Hasher {
@@ -146,6 +180,9 @@ impl Hasher {
             })?
         };
 
+        // PERF FIX: Advise kernel for optimal readahead
+        madvise_for_hashing(&mmap);
+
         Ok(self.hash_bytes(&mmap, file_size))
     }
 
@@ -162,14 +199,14 @@ impl Hasher {
     /// Core hashing logic shared by mmap and buffer paths.
     ///
     /// PERF FIX: Previously used `data.par_chunks(chunk_size)` which created
-    /// one rayon work item per 8KB chunk.  BLAKE3 hashes 8KB in ~1-2μs but
-    /// rayon scheduling overhead is ~1-5μs per item — the overhead was up to
+    /// one rayon work item per 8KB chunk.  BLAKE3 hashes 8KB in ~1-2us but
+    /// rayon scheduling overhead is ~1-5us per item — the overhead was up to
     /// 250% of useful work, completely negating multi-core benefits.
     ///
     /// Now:
-    ///  - Files < 2 MB  → sequential hashing (zero rayon overhead)
-    ///  - Files ≥ 2 MB  → batched parallel (128 chunks per rayon task ≈ 1 MB
-    ///    per work item), reducing scheduling overhead by ~128×.
+    ///  - Files < 2 MB  -> sequential hashing (zero rayon overhead)
+    ///  - Files >= 2 MB -> batched parallel (128 chunks per rayon task ~ 1 MB
+    ///    per work item), reducing scheduling overhead by ~128x.
     fn hash_bytes(&self, data: &[u8], file_size: u64) -> FileManifest {
         let chunk_size = self.chunk_size;
 
@@ -317,7 +354,6 @@ mod tests {
         let h = Hasher::new(4096);
         let short = h.hash_buffer(&vec![0xAAu8; 4096]);
         let long = h.hash_buffer(&vec![0xAAu8; 4096 * 3]);
-        // short (1 chunk) vs long (3 chunks): 0 common diffs + 0 src extra + 2 dst extra
         assert_eq!(short.diff_count(&long), 2);
     }
 }
