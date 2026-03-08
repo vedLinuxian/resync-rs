@@ -90,6 +90,40 @@ fn main() -> anyhow::Result<()> {
             rt.block_on(client.run())?;
         }
 
+        // ── Phase 2: Network pull (remote → local) ───────────────────────
+        Some(Command::Pull {
+            remote,
+            dest,
+            tls,
+            tls_verify,
+        }) => {
+            let (addr, remote_source) = parse_remote(&remote)?;
+            let tls_config = TlsConfig {
+                enabled: tls,
+                cert_path: None,
+                key_path: None,
+                verify: tls_verify,
+            };
+            let opts = ClientOptions {
+                source: remote_source,
+                remote_addr: addr,
+                remote_dest: dest,
+                chunk_size: args.chunk_size as usize,
+                compress: args.compress,
+                delete: args.delete,
+                preserve_perms: args.preserve_perms,
+                preserve_times: args.preserve_times,
+                preserve_links: args.preserve_links,
+                recursive: args.recursive,
+                verbose: args.verbose,
+                show_stats: args.stats,
+                tls_config,
+            };
+            let client = Client::new(opts);
+            let rt = tokio::runtime::Runtime::new()?;
+            rt.block_on(client.pull())?;
+        }
+
         // ── Phase 1: Local sync (rsync-compatible) ────────────────────────
         None => {
             let source = args

@@ -275,6 +275,43 @@ pub struct Cli {
     /// Print final benchmark summary (throughput, CPU utilisation, time)
     #[arg(long = "stats", global = true)]
     pub stats: bool,
+
+    // ───── manifest cache (resync performance) ───────────────────────────
+    /// Disable manifest cache (always scan destination fresh).
+    #[arg(long = "no-manifest", global = true)]
+    pub no_manifest: bool,
+
+    /// Directory to store the manifest cache file (default: destination dir).
+    #[arg(long = "manifest-dir", value_name = "DIR", global = true)]
+    pub manifest_dir: Option<PathBuf>,
+
+    /// Ultra-fast no-change detection: if directory mtimes haven't changed
+    /// since last sync, assume no files were modified. This is safe when NO
+    /// files are edited in-place (e.g. build outputs, deployments). Not safe
+    /// when users may edit files directly. Enables ~100-500x speedup.
+    #[arg(long = "trust-mtime", global = true)]
+    pub trust_mtime: bool,
+
+    // ───── additional rsync-compat flags ─────────────────────────────────
+    /// Read list of files to transfer from FILE (one per line).
+    #[arg(long = "files-from", value_name = "FILE", global = true)]
+    pub files_from: Option<PathBuf>,
+
+    /// Override destination permissions using chmod-style string (e.g. "u+rw,go+r").
+    #[arg(long = "chmod", value_name = "PERMS", global = true)]
+    pub chmod: Option<String>,
+
+    /// Override destination owner:group (e.g. "nobody:nogroup" or "1000:1000").
+    #[arg(long = "chown", value_name = "USER:GROUP", global = true)]
+    pub chown: Option<String>,
+
+    /// Verify file checksums after transfer (post-transfer integrity check).
+    #[arg(long = "checksum-verify", global = true)]
+    pub checksum_verify: bool,
+
+    /// Use reflinks (CoW copies) on supported filesystems (btrfs, XFS).
+    #[arg(long = "reflink", global = true)]
+    pub reflink: bool,
 }
 
 #[derive(Debug, Clone, Subcommand)]
@@ -297,6 +334,18 @@ pub enum Command {
     Push {
         source: PathBuf,
         remote: String,
+        #[arg(long = "tls")]
+        tls: bool,
+        #[arg(long = "tls-verify")]
+        tls_verify: bool,
+    },
+
+    /// Pull files from a remote resync server to local destination
+    Pull {
+        /// Remote source in HOST:PATH or HOST:PORT:PATH format
+        remote: String,
+        /// Local destination directory
+        dest: PathBuf,
         #[arg(long = "tls")]
         tls: bool,
         #[arg(long = "tls-verify")]

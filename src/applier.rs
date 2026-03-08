@@ -186,6 +186,14 @@ pub struct Applier {
     pub inplace: bool,
     pub sparse: bool,
     pub append: bool,
+    pub partial: bool,
+    pub reflink: bool,
+    /// Override destination permissions (parsed from --chmod string).
+    pub chmod_mode: Option<u32>,
+    /// Override destination uid (parsed from --chown string).
+    pub chown_uid: Option<u32>,
+    /// Override destination gid (parsed from --chown string).
+    pub chown_gid: Option<u32>,
 }
 
 impl Applier {
@@ -208,6 +216,11 @@ impl Applier {
             inplace,
             sparse: false,
             append: false,
+            partial: false,
+            reflink: false,
+            chmod_mode: None,
+            chown_uid: None,
+            chown_gid: None,
         }
     }
 
@@ -219,6 +232,86 @@ impl Applier {
     /// Enable append mode — only write data beyond the current dst file length.
     pub fn set_append(&mut self, enabled: bool) {
         self.append = enabled;
+    }
+
+    /// Enable partial mode — keep partial files on transfer failure.
+    pub fn set_partial(&mut self, enabled: bool) {
+        self.partial = enabled;
+    }
+
+    /// Enable reflink (CoW) copies on supported filesystems.
+    pub fn set_reflink(&mut self, enabled: bool) {
+        self.reflink = enabled;
+    }
+
+    /// Set permission override from --chmod string.
+    /// Supports octal (e.g. "0755") or symbolic-ish (basic: "u+rw,go+r").
+    pub fn set_chmod(&mut self, spec: &str) {
+        // Try octal first
+        if let Ok(mode) = u32::from_str_radix(spec.trim_start_matches('0'), 8) {
+            self.chmod_mode = Some(mode & 0o7777);
+            return;
+        }
+        // Basic symbolic: parse common patterns
+        let mut mode: u32 = 0o644; // Start with default
+        for part in spec.split(',') {
+            let part = part.trim();
+            if part.contains("+x") || part.contains("+X") {
+                mode |= 0o111;
+            }
+            if part.contains("+r") {
+                mode |= 0o444;
+            }
+            if part.contains("+w") {
+                if part.starts_with('u') || part.starts_with('a') {
+                    mode |= 0o200;
+                } else if part.starts_with('g') {
+                    mode |= 0o020;
+                } else if part.starts_with('o') {
+                    mode |= 0o002;
+                } else {
+                    mode |= 0o222;
+                }
+            }
+        }
+        self.chmod_mode = Some(mode);
+    }
+
+    /// Set owner/group override from --chown string ("user:group" or "uid:gid").
+    pub fn set_chown(&mut self, spec: &str) {
+        let parts: Vec<&str> = spec.splitn(2, ':').collect();
+        if let Some(user) = parts.first() {
+            if let Ok(uid) = user.parse::<u32>() {
+                self.chown_uid = Some(uid);
+            }
+            // If non-numeric, try resolving username (best-effort)
+            #[cfg(unix)]
+            if self.chown_uid.is_none() && !user.is_empty() {
+                // Use libc::getpwnam for name resolution
+                use std::ffi::CString;
+                if let Ok(c_name) = CString::new(*user) {
+                    let result = unsafe { libc::getpwnam(c_name.as_ptr()) };
+                    if !result.is_null() {
+                        self.chown_uid = Some(unsafe { (*result).pw_uid });
+                    }
+                }
+            }
+        }
+        if let Some(group) = parts.get(1) {
+            if let Ok(gid) = group.parse::<u32>() {
+                self.chown_gid = Some(gid);
+            }
+            #[cfg(unix)]
+            if self.chown_gid.is_none() && !group.is_empty() {
+                use std::ffi::CString;
+                if let Ok(c_name) = CString::new(*group) {
+                    let result = unsafe { libc::getgrnam(c_name.as_ptr()) };
+                    if !result.is_null() {
+                        self.chown_gid = Some(unsafe { (*result).gr_gid });
+                    }
+                }
+            }
+        }
     }
 
     /// Apply `delta` to produce `dst_path`, reading new data from `src_path`.
@@ -299,8 +392,14 @@ impl Applier {
                 Ok(bytes_written)
             }
             Err(e) => {
-                // Clean up temp file on failure
-                let _ = fs::remove_file(&tmp_path);
+                if self.partial {
+                    // --partial: keep the temp file for resume on next run
+                    // Rename it to the final path so it's visible
+                    let _ = fs::rename(&tmp_path, dst_path);
+                } else {
+                    // Clean up temp file on failure
+                    let _ = fs::remove_file(&tmp_path);
+                }
                 Err(e)
             }
         }
@@ -689,6 +788,23 @@ impl Applier {
         // Atomic copy via temp file + zero-copy on Linux
         let tmp_path = temp_path_for(dst_path);
 
+        // Try reflink (CoW) copy first if requested
+        if self.reflink {
+            if let Ok(()) = Self::try_reflink(src_path, &tmp_path) {
+                if self.fsync {
+                    if let Ok(f) = File::open(&tmp_path) {
+                        f.sync_data().ok();
+                    }
+                }
+                if let Ok(()) = fs::rename(&tmp_path, dst_path).map_err(|_| ()) {
+                    self.apply_metadata(dst_path, src_entry)?;
+                    return Ok(src_entry.size);
+                }
+            }
+            // Reflink failed — fall through to normal copy
+            let _ = fs::remove_file(&tmp_path);
+        }
+
         match copy_file_range_all(src_path, &tmp_path) {
             Ok(_) => {
                 if self.fsync {
@@ -704,13 +820,49 @@ impl Applier {
                 Ok(src_entry.size)
             }
             Err(e) => {
-                let _ = fs::remove_file(&tmp_path);
+                if self.partial {
+                    // --partial: keep partial file at destination path
+                    let _ = fs::rename(&tmp_path, dst_path);
+                } else {
+                    let _ = fs::remove_file(&tmp_path);
+                }
                 Err(ResyncError::Io {
                     path: dst_path.display().to_string(),
                     source: e,
                 })
             }
         }
+    }
+
+    /// Try to create a CoW (reflink) copy using FICLONE ioctl.
+    #[cfg(target_os = "linux")]
+    fn try_reflink(src_path: &Path, dst_path: &Path) -> std::result::Result<(), ()> {
+        use std::os::unix::io::AsRawFd;
+
+        let src_file = File::open(src_path).map_err(|_| ())?;
+        let dst_file = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(dst_path)
+            .map_err(|_| ())?;
+
+        // FICLONE ioctl number
+        const FICLONE: libc::c_ulong = 0x40049409;
+
+        let ret = unsafe {
+            libc::ioctl(dst_file.as_raw_fd(), FICLONE, src_file.as_raw_fd())
+        };
+        if ret == 0 {
+            Ok(())
+        } else {
+            Err(())
+        }
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    fn try_reflink(_src_path: &Path, _dst_path: &Path) -> std::result::Result<(), ()> {
+        Err(())
     }
 
     // ─── Private helpers ─────────────────────────────────────────────────────
@@ -742,8 +894,13 @@ impl Applier {
     fn apply_metadata(&self, dst_path: &Path, src: &FileEntry) -> Result<()> {
         #[cfg(unix)]
         {
-            if self.preserve_perms {
-                let perms = fs::Permissions::from_mode(src.mode & 0o7777);
+            if self.preserve_perms || self.chmod_mode.is_some() {
+                let mode = if let Some(override_mode) = self.chmod_mode {
+                    override_mode
+                } else {
+                    src.mode & 0o7777
+                };
+                let perms = fs::Permissions::from_mode(mode);
                 fs::set_permissions(dst_path, perms).map_err(|e| ResyncError::Io {
                     path: dst_path.display().to_string(),
                     source: e,
@@ -776,9 +933,22 @@ impl Applier {
 
             // Owner/group preservation via libc::chown
             // PERF: Uses uid/gid cached in FileEntry — ZERO extra stat() calls.
-            if self.preserve_owner || self.preserve_group {
-                let new_uid = if self.preserve_owner { src.uid } else { u32::MAX };
-                let new_gid = if self.preserve_group { src.gid } else { u32::MAX };
+            // Also supports --chown override.
+            if self.preserve_owner || self.preserve_group || self.chown_uid.is_some() || self.chown_gid.is_some() {
+                let new_uid = if let Some(uid) = self.chown_uid {
+                    uid
+                } else if self.preserve_owner {
+                    src.uid
+                } else {
+                    u32::MAX
+                };
+                let new_gid = if let Some(gid) = self.chown_gid {
+                    gid
+                } else if self.preserve_group {
+                    src.gid
+                } else {
+                    u32::MAX
+                };
 
                 // Only call chown if we actually want to change something
                 if new_uid != u32::MAX || new_gid != u32::MAX {

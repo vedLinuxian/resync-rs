@@ -10,6 +10,7 @@ pub mod delta;
 pub mod error;
 pub mod filter;
 pub mod hasher;
+pub mod manifest;
 pub mod net;
 pub mod progress;
 pub mod scanner;

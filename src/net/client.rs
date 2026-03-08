@@ -263,6 +263,160 @@ impl Client {
 
     // ─── Private helpers ─────────────────────────────────────────────────────
 
+    /// Pull mode: request files FROM the remote server to local destination.
+    ///
+    /// This connects to the server and requests it to send files from
+    /// `self.opts.source` (the remote path) to `self.opts.remote_dest`
+    /// (the local destination).
+    pub async fn pull(&self) -> anyhow::Result<()> {
+        let start = Instant::now();
+
+        info!("connecting to {} for pull", self.opts.remote_addr);
+        let stream = TcpStream::connect(self.opts.remote_addr).await?;
+        stream.set_nodelay(true)?;
+        let host = self.opts.remote_addr.ip().to_string();
+        let stream = connect_stream(stream, &host, &self.opts.tls_config).await?;
+        let mut framed = Framed::new(stream, MsgCodec::new(self.opts.compress));
+
+        // Handshake
+        send(
+            &mut framed,
+            Msg::Hello {
+                version: PROTOCOL_VERSION,
+                chunk_size: self.opts.chunk_size,
+                compress: self.opts.compress,
+            },
+        )
+        .await?;
+
+        match recv(&mut framed).await? {
+            Msg::HelloAck { ok: true, .. } => {
+                info!("handshake OK");
+            }
+            Msg::HelloAck {
+                ok: false, error, ..
+            } => {
+                let msg = error.unwrap_or_else(|| "unknown".to_string());
+                anyhow::bail!("server rejected handshake: {msg}");
+            }
+            other => anyhow::bail!("expected HelloAck, got {other:?}"),
+        }
+
+        // Request pull: tell server we want files FROM source path
+        send(
+            &mut framed,
+            Msg::PullRequest {
+                source_path: self.opts.source.clone(),
+                dest_path: self.opts.remote_dest.clone(),
+            },
+        )
+        .await?;
+
+        // Receive files from server
+        let local_dest = &self.opts.remote_dest;
+        std::fs::create_dir_all(local_dest)?;
+
+        let mut files_received: u64 = 0;
+        let mut bytes_received: u64 = 0;
+
+        loop {
+            match recv(&mut framed).await? {
+                Msg::FileDataStart {
+                    rel_path,
+                    size,
+                    mode,
+                    mtime_secs,
+                    mtime_nanos,
+                    ..
+                } => {
+                    let dst_path = local_dest.join(&rel_path);
+                    if let Some(parent) = dst_path.parent() {
+                        std::fs::create_dir_all(parent)?;
+                    }
+
+                    // Receive file data chunks
+                    let mut file_data = Vec::with_capacity(size as usize);
+                    loop {
+                        match recv(&mut framed).await? {
+                            Msg::FileDataChunk { data } => {
+                                file_data.extend_from_slice(&data);
+                            }
+                            Msg::FileDataEnd => break,
+                            other => anyhow::bail!("expected FileDataChunk/End, got {other:?}"),
+                        }
+                    }
+
+                    // Write to local file
+                    std::fs::write(&dst_path, &file_data)?;
+
+                    // Apply permissions
+                    #[cfg(unix)]
+                    if self.opts.preserve_perms {
+                        use std::os::unix::fs::PermissionsExt;
+                        let perms = std::fs::Permissions::from_mode(mode & 0o7777);
+                        std::fs::set_permissions(&dst_path, perms)?;
+                    }
+
+                    // Apply mtime
+                    if self.opts.preserve_times {
+                        use std::ffi::CString;
+                        if let Ok(c_path) = CString::new(dst_path.to_string_lossy().as_bytes()) {
+                            let ts = libc::timespec {
+                                tv_sec: mtime_secs,
+                                tv_nsec: mtime_nanos as i64,
+                            };
+                            let times = [
+                                libc::timespec { tv_sec: 0, tv_nsec: libc::UTIME_OMIT },
+                                ts,
+                            ];
+                            unsafe {
+                                libc::utimensat(libc::AT_FDCWD, c_path.as_ptr(), times.as_ptr(), 0);
+                            }
+                        }
+                    }
+
+                    files_received += 1;
+                    bytes_received += file_data.len() as u64;
+
+                    if self.opts.verbose {
+                        println!("  RECV  {}", rel_path.display());
+                    }
+                }
+                Msg::SyncComplete {
+                    files_new,
+                    files_updated,
+                    files_skipped,
+                    files_deleted,
+                    files_errored,
+                    bytes_transferred: _,
+                } => {
+                    let elapsed = start.elapsed();
+                    if self.opts.show_stats || self.opts.verbose {
+                        println!();
+                        println!("─────────────────────────────────────────────────────");
+                        println!("  resync-rs  —  pull complete");
+                        println!("─────────────────────────────────────────────────────");
+                        println!(
+                            "  Files       : {} new, {} updated, {} unchanged, {} deleted, {} errors",
+                            files_new, files_updated, files_skipped, files_deleted, files_errored,
+                        );
+                        println!(
+                            "  Received    : {} ({} files)",
+                            bytesize::ByteSize::b(bytes_received),
+                            files_received,
+                        );
+                        println!("  Time        : {:.3}s", elapsed.as_secs_f64());
+                        println!("─────────────────────────────────────────────────────");
+                    }
+                    break;
+                }
+                other => anyhow::bail!("unexpected message during pull: {other:?}"),
+            }
+        }
+
+        Ok(())
+    }
+
     /// Stream a full file to the server.
     async fn send_full_file(
         &self,

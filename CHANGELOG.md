@@ -5,6 +5,55 @@ All notable changes to resync-rs will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2025-07-16
+
+### Added
+
+- **Two-tier manifest cache** -- persistent `.resync-manifest` (zstd-compressed
+  bincode) and `.resync-toc` (tiny dir-mtime index). On repeated syncs the
+  destination is never re-scanned; the manifest provides all metadata.
+- **Incremental source scanning** -- uses cached directory mtimes to skip
+  `readdir()` for unchanged directories. Still does live `stat()` on every
+  file for correctness. Cuts source scan time proportionally to unchanged dirs.
+- **`--trust-mtime` flag** -- opt-in ultra-fast mode. If directory mtimes
+  match the TOC, skips the entire sync pipeline (~200-600x faster). Safe for
+  deployments and CI; not safe when files are edited in-place.
+- **`--files-from FILE`** -- read file list from FILE (one path per line),
+  syncing only those files. rsync-compatible.
+- **`--chmod PERMS`** -- override destination permissions using chmod-style
+  strings (e.g. `u+rw,go+r`).
+- **`--chown USER:GROUP`** -- override destination owner and group.
+- **`--checksum-verify`** -- BLAKE3 integrity check after every file transfer.
+  Reads the destination back and compares against the source hash.
+- **`--reflink`** -- use CoW reflinks on btrfs/XFS for instant, zero-copy file
+  copies via `copy_file_range()` with FICLONE ioctl.
+- **`resync pull` subcommand** -- pull files from a remote resync server to
+  local destination (reverse of `push`). Supports `--tls` and `--tls-verify`.
+- **Parallel directory walking** -- scanner now uses BFS with parallel readdir
+  via rayon's work-stealing pool, saturating NVMe IOPS.
+
+### Fixed
+
+- **12 dead/no-op CLI flags** -- `--hard-links`, `--devices`, `--specials`,
+  `--max-delete`, `--force`, `--backup-dir`, `--suffix`, `--partial`,
+  `--modify-window`, `--log-file`, `--itemize-changes`, `--bwlimit` were
+  accepted but silently ignored. All now emit a "not yet implemented" warning
+  or have been wired into the engine.
+- **TOC correctness bug** -- directory mtimes don't change when file contents
+  are modified in-place. The TOC fast path and decision-phase skip are now
+  gated behind `--trust-mtime` to prevent silent data loss.
+- **Incremental scan cached-stat bug** -- unchanged directories were using
+  cached file metadata (old mtimes/sizes) instead of live `stat()`. Fixed to
+  always do live stat on files; only readdir is skipped.
+
+### Performance
+
+- **Full copy**: 2.9x faster at 100K-500K files, 3.3x on large files
+- **No-change (correct)**: 1.8x at 100K, 13.2x on large files (manifest skip)
+- **No-change (--trust-mtime)**: 210x at 100K, 613x at 500K (TOC fast path)
+- Manifest compression: zstd reduces manifest from 37 MB → 6.6 MB at 500K
+- Skip manifest save when nothing changed (~80 ms saved per no-op sync)
+
 ## [0.2.0] - 2025-07-15
 
 ### Added

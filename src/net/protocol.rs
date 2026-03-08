@@ -166,6 +166,13 @@ pub enum Msg {
 
     /// Either direction: fatal error, abort session.
     Error { message: String },
+
+    // ─── Pull mode (client ← server) ────────────────────────────────────
+    /// Client → Server: request to pull files from server's source_path.
+    PullRequest {
+        source_path: PathBuf,
+        dest_path: PathBuf,
+    },
 }
 
 /// A wire-safe delta operation. Unlike the internal `DeltaOp`, the Write

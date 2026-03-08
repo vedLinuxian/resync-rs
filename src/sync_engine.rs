@@ -28,7 +28,7 @@
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::{BufWriter, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::Instant;
@@ -42,6 +42,7 @@ use crate::delta::DeltaEngine;
 use crate::error::{Result, ResyncError};
 use crate::filter::{FilterEngine, RateLimiter};
 use crate::hasher::Hasher;
+use crate::manifest::Manifest;
 use crate::progress::ProgressReporter;
 use crate::scanner::{FileEntry, Scanner};
 
@@ -93,6 +94,20 @@ pub struct SyncOptions {
     pub ignore_errors: bool,
     pub prune_empty_dirs: bool,
     pub fsync: bool,
+    // ── Manifest cache ─────────────────────────
+    pub no_manifest: bool,
+    pub manifest_dir: Option<PathBuf>,
+    pub trust_mtime: bool,
+    // ── New features ───────────────────────────
+    pub files_from: Option<PathBuf>,
+    pub chmod: Option<String>,
+    pub chown: Option<String>,
+    pub checksum_verify: bool,
+    pub reflink: bool,
+    pub timeout: u64,
+    pub human_readable: bool,
+    pub devices: bool,
+    pub specials: bool,
 }
 
 impl From<&Cli> for SyncOptions {
@@ -153,6 +168,18 @@ impl From<&Cli> for SyncOptions {
             ignore_errors: cli.ignore_errors,
             prune_empty_dirs: cli.prune_empty_dirs,
             fsync: cli.fsync,
+            no_manifest: cli.no_manifest,
+            manifest_dir: cli.manifest_dir.clone(),
+            trust_mtime: cli.trust_mtime,
+            files_from: cli.files_from.clone(),
+            chmod: cli.chmod.clone(),
+            chown: cli.chown.clone(),
+            checksum_verify: cli.checksum_verify,
+            reflink: cli.reflink,
+            timeout: cli.timeout,
+            human_readable: cli.human_readable,
+            devices: cli.devices,
+            specials: cli.specials,
         }
     }
 }
@@ -203,17 +230,64 @@ impl SyncEngine {
             .build()
             .map_err(|e| ResyncError::Other(anyhow::anyhow!("failed to build thread pool: {e}")))?;
 
-        // ── 3. Scan source + destination ──────────────────────────────
+        // ── 3. Ultra-fast no-change detection via TOC ─────────────────────
         //
-        // PERF: Both src and dst are scanned sequentially using our turbo
-        // readdir scanner (zero thread overhead, zero kernel lock contention).
-        // The dst scan builds a HashMap for O(1) lookups.
-        //
-        // Why sequential beats parallel for scanning:
-        // - Parallel stat() causes kernel inode lock contention (futex waits)
-        // - readdir() returns entries in dirent order (cache-friendly)
-        // - One readdir() syscall returns ~100 entries vs 1 stat per entry
-        // - No thread pool setup/teardown overhead
+        // The TOC is a tiny file (< 50 KB) containing just directory mtimes.
+        // --trust-mtime: if ALL directory mtimes match, assume nothing changed.
+        // This is safe for deployments/CI (artifacts are replaced, not edited)
+        // but NOT safe when users may edit files in-place.
+        if self.opts.trust_mtime && !self.opts.no_manifest && !self.opts.delete && !self.opts.dry_run && !self.opts.checksum {
+            use crate::manifest::ManifestToc;
+            let toc_dest = if let Some(ref dir) = self.opts.manifest_dir {
+                dir.clone()
+            } else {
+                self.opts.dest.clone()
+            };
+            if let Some(toc) = ManifestToc::load(&toc_dest) {
+                let src_canon = self.opts.source.canonicalize()
+                    .unwrap_or_else(|_| self.opts.source.clone());
+                if (toc.source_path == src_canon || toc.source_path == self.opts.source)
+                    && toc.source_unchanged(&src_canon)
+                {
+                    info!(
+                        "TOC fast path: all {} dirs unchanged — nothing to sync ({} files, {})",
+                        toc.dir_mtimes.len(),
+                        toc.file_count,
+                        bytesize::ByteSize::b(toc.total_bytes),
+                    );
+                    let elapsed = start.elapsed().as_secs_f64();
+                    info!("sync complete in {elapsed:.3}s — 0 errors (TOC fast path)");
+                    return Ok(());
+                }
+            }
+        }
+
+        // ── 4. Load full manifest (needed for incremental scan and dst cache) ──
+        let manifest_path = if let Some(ref dir) = self.opts.manifest_dir {
+            dir.join(crate::manifest::MANIFEST_FILENAME)
+        } else {
+            Manifest::path_for(&self.opts.dest)
+        };
+
+        let loaded_manifest = if !self.opts.no_manifest {
+            Manifest::load(&manifest_path).and_then(|m| {
+                let src_canon = self.opts.source.canonicalize().unwrap_or_else(|_| self.opts.source.clone());
+                if m.source_path == src_canon || m.source_path == self.opts.source {
+                    Some(m)
+                } else {
+                    info!(
+                        "Manifest source path mismatch ({} vs {}), ignoring cache",
+                        m.source_path.display(),
+                        src_canon.display()
+                    );
+                    None
+                }
+            })
+        } else {
+            None
+        };
+
+        // ── 5. Scan source (incremental if manifest available) ────────────
         info!("Scanning source: {}", self.opts.source.display());
         let mut src_scanner = Scanner::new(
             &self.opts.source,
@@ -221,30 +295,57 @@ impl SyncEngine {
             self.opts.preserve_links,
         )?;
         src_scanner.set_one_file_system(self.opts.one_file_system);
-        let src_result = src_scanner.scan()?;
 
-        // Always pre-scan destination (fast sequential readdir + HashMap)
-        let (dst_map, dst_dir_set) = if self.opts.dest.exists() {
-            let mut dst_scanner = Scanner::new(
-                &self.opts.dest,
-                self.opts.recursive,
-                self.opts.preserve_links,
-            )?;
-            dst_scanner.set_one_file_system(self.opts.one_file_system);
-            let dst_result = dst_scanner.scan()?;
-            let map: HashMap<PathBuf, FileEntry> = dst_result
-                .files
-                .into_iter()
-                .map(|f| (f.rel_path.clone(), f))
-                .collect();
-            let dir_set: HashSet<PathBuf> = dst_result
-                .dirs
-                .into_iter()
-                .map(|d| d.rel_path)
-                .collect();
-            (map, dir_set)
+        let src_result = if let Some(ref manifest) = loaded_manifest {
+            let cache = manifest.to_incremental_cache();
+            info!(
+                "Using incremental source scan ({} cached dirs)",
+                cache.dir_mtimes.len()
+            );
+            src_scanner.scan_incremental(&cache)?
         } else {
-            (HashMap::new(), HashSet::new())
+            src_scanner.scan()?
+        };
+
+        // ── 5. Destination: use manifest cache or live scan ───────────────
+        let (dst_map, dst_dir_set, used_manifest) = if let Some(ref manifest) = loaded_manifest {
+            info!(
+                "Using manifest cache ({} files) — skipping destination scan",
+                manifest.files.len()
+            );
+            let map = manifest.to_dst_map(&self.opts.dest);
+            let dir_set = manifest.to_dir_set();
+            (map, dir_set, true)
+        } else {
+            (HashMap::new(), HashSet::new(), false)
+        };
+
+        // If manifest wasn't used, do a live dst scan
+        let (dst_map, dst_dir_set) = if !used_manifest {
+            if self.opts.dest.exists() {
+                let mut dst_scanner = Scanner::new(
+                    &self.opts.dest,
+                    self.opts.recursive,
+                    self.opts.preserve_links,
+                )?;
+                dst_scanner.set_one_file_system(self.opts.one_file_system);
+                let dst_result = dst_scanner.scan()?;
+                let map: HashMap<PathBuf, FileEntry> = dst_result
+                    .files
+                    .into_iter()
+                    .map(|f| (f.rel_path.clone(), f))
+                    .collect();
+                let dir_set: HashSet<PathBuf> = dst_result
+                    .dirs
+                    .into_iter()
+                    .map(|d| d.rel_path)
+                    .collect();
+                (map, dir_set)
+            } else {
+                (HashMap::new(), HashSet::new())
+            }
+        } else {
+            (dst_map, dst_dir_set)
         };
 
         if src_result.errors > 0 {
@@ -255,14 +356,37 @@ impl SyncEngine {
         }
 
         info!(
-            "Source: {} files, {} | Dest: {} existing files",
+            "Source: {} files, {} | Dest: {} existing files{}",
             src_result.files.len(),
             bytesize::ByteSize::b(src_result.total_bytes),
             dst_map.len(),
+            if used_manifest { " (from manifest)" } else { "" },
         );
 
-        // ── 3b. Apply filter engine + size filters ────────────────────────
+        // ── 3b. Apply filter engine + size filters + --files-from ──────────
         let mut src_result = src_result;
+
+        // --files-from: restrict to only files listed in the given file
+        if let Some(ref files_from_path) = self.opts.files_from {
+            let content = fs::read_to_string(files_from_path).map_err(|e| ResyncError::Io {
+                path: files_from_path.display().to_string(),
+                source: e,
+            })?;
+            let allowed: HashSet<PathBuf> = content
+                .lines()
+                .map(|l| l.trim())
+                .filter(|l| !l.is_empty() && !l.starts_with('#'))
+                .map(PathBuf::from)
+                .collect();
+            let before = src_result.files.len();
+            src_result.files.retain(|f| allowed.contains(&f.rel_path));
+            info!(
+                "--files-from: {} -> {} files after filtering",
+                before,
+                src_result.files.len()
+            );
+        }
+
         if let Some(ref filter) = self.opts.filter_engine {
             let file_before = src_result.files.len();
             src_result
@@ -343,8 +467,23 @@ impl SyncEngine {
         );
         applier.set_sparse(self.opts.sparse);
         applier.set_append(self.opts.append);
+        applier.set_partial(self.opts.partial);
+        applier.set_reflink(self.opts.reflink);
+        if let Some(ref chmod) = self.opts.chmod {
+            applier.set_chmod(chmod);
+        }
+        if let Some(ref chown) = self.opts.chown {
+            applier.set_chown(chown);
+        }
 
         let error_count = AtomicU64::new(0);
+
+        // ── 6b. Build hard-link tracking map ──────────────────────────────
+        //
+        // If -H is set, group source files by (dev, ino) to recreate hard
+        // link sets at the destination.  First file in each group is copied
+        // normally; subsequent files are hard-linked to the first.
+        let hard_link_map: Mutex<HashMap<(u64, u64), PathBuf>> = Mutex::new(HashMap::new());
 
         // ── 7. Two-phase processing ──────────────────────────────────────
         //
@@ -370,6 +509,24 @@ impl SyncEngine {
         let mut skipped_bytes: u64 = 0;
         let mut skipped_count: u64 = 0;
 
+        // FAST PATH (--trust-mtime only): If incremental scan found no directory
+        // changes AND we have a valid manifest, assume the source tree is identical
+        // to what was last synced. ONLY SAFE when files are not edited in-place.
+        let source_unchanged = self.opts.trust_mtime
+            && loaded_manifest.is_some()
+            && used_manifest
+            && src_result.dirs_rescanned <= 1
+            && !self.opts.delete
+            && !self.opts.checksum;
+
+        if source_unchanged {
+            skipped_count = src_result.files.len() as u64;
+            skipped_bytes = src_result.total_bytes;
+            info!(
+                "Fast path: source tree unchanged (0 dirs rescanned) — skipping {} file comparisons",
+                skipped_count
+            );
+        } else {
         for (idx, src_entry) in src_result.files.iter().enumerate() {
             let dst_entry = dst_map.get(&src_entry.rel_path);
             let dst_exists = dst_entry.is_some();
@@ -435,6 +592,7 @@ impl SyncEngine {
                 work_list.push((idx, Action::Delta));
             }
         }
+        } // end of else (non-fast-path)
 
         // Report skipped files in bulk (no per-file atomic operations)
         reporter.on_bulk_skipped(skipped_count, skipped_bytes);
@@ -451,6 +609,40 @@ impl SyncEngine {
                 work_list.par_iter().for_each(|(idx, action)| {
                     let src_entry = &src_result.files[*idx];
                     let dst_path = self.opts.dest.join(&src_entry.rel_path);
+
+                    // ── Hard-link preservation (-H) ──────────────────────
+                    // If this inode was already copied, just hard-link to it.
+                    if self.opts.hard_links && !src_entry.is_symlink && src_entry.size > 0 {
+                        let key = (src_entry.dev, src_entry.ino);
+                        let existing = {
+                            let map = hard_link_map.lock().unwrap();
+                            map.get(&key).cloned()
+                        };
+                        if let Some(first_dst) = existing {
+                            // This is a subsequent hard link — just link it
+                            if !self.opts.dry_run {
+                                if let Some(parent) = dst_path.parent() {
+                                    fs::create_dir_all(parent).ok();
+                                }
+                                let _ = fs::remove_file(&dst_path);
+                                if let Err(e) = fs::hard_link(&first_dst, &dst_path) {
+                                    warn!(
+                                        "hard-link {} -> {}: {e}",
+                                        first_dst.display(),
+                                        dst_path.display()
+                                    );
+                                    // Fall through to normal copy
+                                } else {
+                                    reporter.on_file_done(
+                                        src_entry.size,
+                                        0,
+                                        &src_entry.rel_path.display().to_string(),
+                                    );
+                                    return;
+                                }
+                            }
+                        }
+                    }
 
                     // --link-dest check
                     if let Some(ref link_dir) = self.opts.link_dest {
@@ -484,6 +676,11 @@ impl SyncEngine {
                         println!("{} -> {}", src_entry.rel_path.display(), dst_path.display());
                     }
 
+                    // ── Bandwidth limiting ────────────────────────────────
+                    if let Some(ref limiter) = self.opts.rate_limiter {
+                        limiter.acquire(src_entry.size);
+                    }
+
                     match action {
                         Action::CopyNew | Action::CopyFull => {
                             match applier.copy_new(&src_entry.abs_path, &dst_path, src_entry) {
@@ -498,6 +695,18 @@ impl SyncEngine {
                                         bytes,
                                         &src_entry.rel_path.display().to_string(),
                                     );
+
+                                    // Record hard-link mapping for -H
+                                    if self.opts.hard_links && !src_entry.is_symlink {
+                                        let key = (src_entry.dev, src_entry.ino);
+                                        let mut map = hard_link_map.lock().unwrap();
+                                        map.entry(key).or_insert_with(|| dst_path.clone());
+                                    }
+
+                                    // Post-transfer checksum verification
+                                    if self.opts.checksum_verify && !src_entry.is_symlink && src_entry.size > 0 {
+                                        Self::verify_checksum(&src_entry.abs_path, &dst_path, &src_entry.rel_path, &error_count);
+                                    }
                                 }
                                 Err(e) => {
                                     error!("copy failed for {}: {e}", src_entry.rel_path.display());
@@ -590,6 +799,18 @@ impl SyncEngine {
                                             );
                                         }
                                     }
+
+                                    // Record hard-link mapping for -H
+                                    if self.opts.hard_links && !src_entry.is_symlink {
+                                        let key = (src_entry.dev, src_entry.ino);
+                                        let mut map = hard_link_map.lock().unwrap();
+                                        map.entry(key).or_insert_with(|| dst_path.clone());
+                                    }
+
+                                    // Post-transfer checksum verification
+                                    if self.opts.checksum_verify && !src_entry.is_symlink && src_entry.size > 0 {
+                                        Self::verify_checksum(&src_entry.abs_path, &dst_path, &src_entry.rel_path, &error_count);
+                                    }
                                 }
                                 Err(e) => {
                                     error!("apply failed for {}: {e}", src_entry.rel_path.display());
@@ -673,7 +894,43 @@ impl SyncEngine {
             }
         }
 
-        // ── 9. Report ─────────────────────────────────────────────────────
+        // ── 9. Save manifest cache + TOC ──────────────────────────────────
+        //
+        // After a successful sync, save the current source scan as the manifest
+        // so the next run can skip the destination scan and do incremental
+        // source scanning.  Also save a lightweight TOC for ultra-fast no-change
+        // detection on subsequent runs.
+        // PERF: Skip saving if nothing changed and manifest already exists
+        // (saves ~80ms at 100K files).
+        let anything_changed = !work_list.is_empty()
+            || (self.opts.delete && dst_map.iter().any(|(rp, _)| !src_paths.contains(rp.as_path())));
+        let manifest_exists = loaded_manifest.is_some();
+        if !self.opts.no_manifest && !self.opts.dry_run && (anything_changed || !manifest_exists) {
+            let src_canon = self.opts.source.canonicalize().unwrap_or_else(|_| self.opts.source.clone());
+            let manifest = Manifest::from_scan_result(&src_result, src_canon);
+            if let Err(e) = manifest.save(&manifest_path) {
+                warn!("Failed to save manifest cache: {e}");
+            }
+            // Save lightweight TOC for next run's fast path
+            let toc = crate::manifest::ManifestToc::from_manifest(&manifest);
+            let toc_dest = if let Some(ref dir) = self.opts.manifest_dir {
+                dir.clone()
+            } else {
+                self.opts.dest.clone()
+            };
+            if let Err(e) = toc.save(&toc_dest) {
+                warn!("Failed to save TOC: {e}");
+            }
+        } else if !self.opts.no_manifest && !self.opts.dry_run {
+            info!("No changes detected — skipping manifest save");
+        }
+
+        // ── 10. Prune empty directories ───────────────────────────────────
+        if self.opts.prune_empty_dirs && !self.opts.dry_run {
+            Self::prune_empty_dirs(&self.opts.dest);
+        }
+
+        // ── 11. Report ────────────────────────────────────────────────────
         reporter.finish();
         if self.opts.show_stats || self.opts.verbose {
             reporter.print_summary();
@@ -690,6 +947,78 @@ impl SyncEngine {
         } else {
             info!("sync complete in {elapsed:.3}s — 0 errors");
             Ok(())
+        }
+    }
+
+    /// Post-transfer checksum verification: hash both files and compare.
+    fn verify_checksum(
+        src_path: &Path,
+        dst_path: &Path,
+        rel_path: &Path,
+        error_count: &AtomicU64,
+    ) {
+        let src_hash = Self::blake3_file(src_path);
+        let dst_hash = Self::blake3_file(dst_path);
+        match (src_hash, dst_hash) {
+            (Ok(s), Ok(d)) => {
+                if s != d {
+                    error!(
+                        "CHECKSUM MISMATCH after transfer: {} (src={:x?}, dst={:x?})",
+                        rel_path.display(),
+                        &s[..8],
+                        &d[..8]
+                    );
+                    error_count.fetch_add(1, Ordering::Relaxed);
+                }
+            }
+            (Err(e), _) | (_, Err(e)) => {
+                warn!("checksum verify failed for {}: {e}", rel_path.display());
+            }
+        }
+    }
+
+    /// Compute BLAKE3 hash of a file.
+    fn blake3_file(path: &Path) -> std::io::Result<[u8; 32]> {
+        let mut hasher = blake3::Hasher::new();
+        let mut file = fs::File::open(path)?;
+        let mut buf = vec![0u8; 256 * 1024];
+        loop {
+            let n = std::io::Read::read(&mut file, &mut buf)?;
+            if n == 0 {
+                break;
+            }
+            hasher.update(&buf[..n]);
+        }
+        Ok(*hasher.finalize().as_bytes())
+    }
+
+    /// Recursively prune empty directories from the destination tree.
+    fn prune_empty_dirs(root: &Path) {
+        // Walk bottom-up by collecting all dirs, sorting by depth descending
+        let mut dirs: Vec<PathBuf> = Vec::new();
+        Self::collect_dirs(root, &mut dirs);
+        dirs.sort_by(|a, b| b.components().count().cmp(&a.components().count()));
+
+        for dir in dirs {
+            if dir == root {
+                continue;
+            }
+            // remove_dir only succeeds on empty dirs
+            let _ = fs::remove_dir(&dir);
+        }
+    }
+
+    fn collect_dirs(dir: &Path, out: &mut Vec<PathBuf>) {
+        if let Ok(entries) = fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                if let Ok(ft) = entry.file_type() {
+                    if ft.is_dir() {
+                        let path = entry.path();
+                        out.push(path.clone());
+                        Self::collect_dirs(&path, out);
+                    }
+                }
+            }
         }
     }
 }
