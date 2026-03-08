@@ -109,15 +109,17 @@ hardware.
 
 #### Standard Benchmark (10K files)
 
+Hardware: 12th Gen Intel i3-1215U (8 cores), NVMe SSD (ext4), warm page cache.
+
 ```
 Scenario                                rsync       resync      Speedup
 ------------------------------------------------------------------------
-Small files: full copy (10K)            .253s       .098s       2.5x
-Small files: no change (10K)            .081s       .024s       3.2x
-Small files: 5% changed                .105s       .042s       2.4x
-Medium files: full copy (500)           .427s       .097s       4.3x
-Large files: full copy (5x100M)         .483s       .146s       3.3x
-Large files: delta (10% changed)        .699s       .479s       1.4x
+Small files: full copy (10K)            .405s       .188s       2.1x
+Small files: no change (10K)            .135s       .055s       2.4x
+Small files: 5% changed                .194s       .088s       2.1x
+Medium files: full copy (500)           .741s       .282s       2.6x
+Large files: full copy (5x100M)        1.371s       .647s       2.1x
+Large files: delta (10% changed)       1.339s      1.039s       1.2x
 ```
 
 #### Scale Test (100K files, no-change)
@@ -125,8 +127,8 @@ Large files: delta (10% changed)        .699s       .479s       1.4x
 ```
 Scenario                                rsync       resync      Speedup
 ------------------------------------------------------------------------
-100K files, standard                    4.00s       0.26s       15x
-100K files, --trust-mtime              4.00s       0.025s      160x
+100K files, standard                    .760s       .433s       1.7x
+100K files, --trust-mtime              .760s       .006s       ~120x
 ```
 
 The `--trust-mtime` flag enables ultra-fast no-change detection by checking
@@ -135,8 +137,9 @@ where artifacts are replaced atomically, but not safe when files may be
 edited in-place. Without `--trust-mtime`, resync always does live stat()
 of every source file for full correctness.
 
-Typical speedups range from **2.4x to 4.3x** for full copies, **3.2x to 15x**
-for no-change detection, and **160x** with `--trust-mtime` at 100K files.
+Typical speedups range from **2.1x to 2.6x** for full copies, **2.4x** for
+no-change detection, and **~120x** with `--trust-mtime` at 100K files.
+Speedups scale with core count — the numbers above are on an 8-core laptop.
 
 The advantage grows on large files (zero-copy I/O wins) and at scale
 (parallel scanning + manifest cache wins).
@@ -331,7 +334,8 @@ PERFORMANCE
 
 ADVANCED
       --trust-mtime      Ultra-fast no-change detection via dir mtimes
-                         (~100-600x faster; safe for deployments, not for
+                         (~120x faster at 100K files on tested hardware;
+                         safe for deployments, not for
                          in-place edits -- see Benchmarks above)
       --files-from FILE  Read list of source files from FILE (one per line)
       --chmod PERMS      Override destination permissions (e.g. "u+rw,go+r")
@@ -452,7 +456,7 @@ resync is designed to minimize compute and energy consumption:
 - **Content-Defined Chunking**: A 1-byte edit in a 1 GB file transfers only
   the affected chunk (~8 KB), not the whole file.
 
-The 2-4x wall-clock speedup (up to 160x with `--trust-mtime`) translates
+The 2-3x wall-clock speedup (up to ~120x with `--trust-mtime`) translates
 directly to proportionally less CPU time and energy per sync operation.
 
 ---
