@@ -110,6 +110,15 @@ fn madvise_for_hashing(mmap: &Mmap) {
                 libc::MADV_WILLNEED,
             );
         }
+        // Request transparent huge pages for files >= 2 MB (THP alignment)
+        // Reduces TLB misses by 512x on x86_64 (4K -> 2M pages)
+        if mmap.len() >= 2 * 1024 * 1024 {
+            libc::madvise(
+                mmap.as_ptr() as *mut libc::c_void,
+                mmap.len(),
+                libc::MADV_HUGEPAGE,
+            );
+        }
     }
 }
 

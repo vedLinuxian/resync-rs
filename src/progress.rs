@@ -117,6 +117,14 @@ impl ProgressReporter {
         self.bytes_bar.inc(size);
     }
 
+    /// Bulk skip — avoids per-file atomic contention for large skip batches.
+    pub fn on_bulk_skipped(&self, count: u64, bytes: u64) {
+        self.counters.files_skipped.fetch_add(count, Ordering::Relaxed);
+        self.counters.bytes_skipped.fetch_add(bytes, Ordering::Relaxed);
+        self.files_bar.inc(count);
+        self.bytes_bar.inc(bytes);
+    }
+
     /// BUG FIX #19: Called when a file encounters an error — still counts
     /// toward progress so bars reach 100%.
     pub fn on_file_error(&self, size: u64) {

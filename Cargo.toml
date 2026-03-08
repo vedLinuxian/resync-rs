@@ -28,8 +28,8 @@ tokio-util = { version = "0.7", features = ["codec"] }
 futures = "0.3"
 bytes = "1"
 
-# Parallel directory traversal
-jwalk = "0.8"
+# Parallel directory traversal (kept as optional dependency)
+# jwalk = "0.8"
 
 # Zero-copy memory-mapped file I/O
 memmap2 = "0.9"

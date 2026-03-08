@@ -1,702 +1,1384 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>resync-rs -- Next-Gen Parallel File Sync Engine</title>
-    <meta name="description" content="resync-rs: A ground-up rewrite of rsync in Rust. Parallel hashing, zero-copy I/O, BLAKE3 + FastCDC. Up to 93x faster than rsync.">
-    <meta property="og:title" content="resync-rs -- rsync Reimagined in Rust">
-    <meta property="og:description" content="Parallel delta-sync engine. Up to 93x faster than rsync. BLAKE3, mmap, copy_file_range, rayon.">
-    <meta property="og:type" content="website">
-    <meta property="og:url" content="https://vedLinuxian.github.io/resync-rs">
-    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>R</text></svg>">
-    <style>
-        :root {
-            --bg: #0a0e17;
-            --bg2: #111827;
-            --bg3: #1f2937;
-            --accent: #3b82f6;
-            --accent2: #10b981;
-            --accent3: #f59e0b;
-            --text: #e5e7eb;
-            --text2: #9ca3af;
-            --border: #374151;
-        }
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body {
-            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-            background: var(--bg);
-            color: var(--text);
-            line-height: 1.7;
-            overflow-x: hidden;
-        }
-        a { color: var(--accent); text-decoration: none; transition: color 0.2s; }
-        a:hover { color: #60a5fa; }
-        .container { max-width: 1100px; margin: 0 auto; padding: 0 24px; }
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>resync -- rsync reimagined in Rust</title>
+<meta name="description" content="resync-rs: A parallel, zero-copy file synchronization tool written in Rust. 2-6x faster than rsync.">
+<meta name="theme-color" content="#0a0e17">
+<link rel="canonical" href="https://vedLinuxian.github.io/resync-rs">
+<meta property="og:title" content="resync -- rsync reimagined in Rust">
+<meta property="og:description" content="Parallel, zero-copy file synchronization. 2-6x faster than rsync.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://vedLinuxian.github.io/resync-rs">
+<style>
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
 
-        /* Navigation */
-        nav {
-            position: fixed;
-            top: 0;
-            width: 100%;
-            background: rgba(10, 14, 23, 0.92);
-            backdrop-filter: blur(12px);
-            border-bottom: 1px solid var(--border);
-            z-index: 100;
-            padding: 0 24px;
-        }
-        nav .nav-inner {
-            max-width: 1100px;
-            margin: 0 auto;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            height: 56px;
-        }
-        nav .logo {
-            font-size: 1.1rem;
-            font-weight: 700;
-            color: var(--text);
-            letter-spacing: -0.02em;
-        }
-        nav .logo span { color: var(--accent); }
-        nav .nav-links { display: flex; gap: 24px; }
-        nav .nav-links a {
-            color: var(--text2);
-            font-size: 0.875rem;
-            font-weight: 500;
-            transition: color 0.2s;
-        }
-        nav .nav-links a:hover { color: var(--text); }
+:root {
+  --bg-primary: #0a0e17;
+  --bg-secondary: #111827;
+  --bg-card: #1a2233;
+  --bg-code: #0d1321;
+  --accent: #3b82f6;
+  --accent-dim: #2563eb;
+  --accent-glow: rgba(59, 130, 246, 0.15);
+  --success: #10b981;
+  --success-dim: #059669;
+  --warning: #f59e0b;
+  --danger: #ef4444;
+  --text-primary: #e5e7eb;
+  --text-secondary: #9ca3af;
+  --text-muted: #6b7280;
+  --border: #1f2937;
+  --border-light: #374151;
+}
 
-        /* Hero */
-        .hero {
-            padding: 140px 0 80px;
-            text-align: center;
-        }
-        .hero h1 {
-            font-size: 3.2rem;
-            font-weight: 800;
-            letter-spacing: -0.03em;
-            line-height: 1.1;
-            margin-bottom: 20px;
-        }
-        .hero h1 .highlight { color: var(--accent); }
-        .hero .subtitle {
-            font-size: 1.2rem;
-            color: var(--text2);
-            max-width: 640px;
-            margin: 0 auto 32px;
-        }
-        .hero .cta {
-            display: inline-flex;
-            gap: 12px;
-            flex-wrap: wrap;
-            justify-content: center;
-        }
-        .hero .cta a {
-            display: inline-block;
-            padding: 12px 28px;
-            border-radius: 8px;
-            font-weight: 600;
-            font-size: 0.95rem;
-            transition: all 0.2s;
-        }
-        .hero .cta .primary {
-            background: var(--accent);
-            color: #fff;
-        }
-        .hero .cta .primary:hover { background: #2563eb; }
-        .hero .cta .secondary {
-            background: var(--bg3);
-            color: var(--text);
-            border: 1px solid var(--border);
-        }
-        .hero .cta .secondary:hover { border-color: var(--accent); }
+html {
+  scroll-behavior: smooth;
+  font-size: 16px;
+}
 
-        .install-box {
-            margin: 32px auto 0;
-            max-width: 480px;
-            background: var(--bg2);
-            border: 1px solid var(--border);
-            border-radius: 8px;
-            padding: 16px 20px;
-            font-family: 'Fira Code', 'SF Mono', monospace;
-            font-size: 0.9rem;
-            color: var(--accent2);
-            text-align: left;
-        }
-        .install-box .prompt { color: var(--text2); }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+  line-height: 1.7;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow-x: hidden;
+}
 
-        /* Sections */
-        section {
-            padding: 80px 0;
-            border-top: 1px solid var(--border);
-        }
-        section h2 {
-            font-size: 2rem;
-            font-weight: 700;
-            letter-spacing: -0.02em;
-            margin-bottom: 16px;
-        }
-        section .section-desc {
-            color: var(--text2);
-            font-size: 1.05rem;
-            max-width: 640px;
-            margin-bottom: 40px;
-        }
+a {
+  color: var(--accent);
+  text-decoration: none;
+  transition: color 0.2s ease;
+}
+a:hover {
+  color: #60a5fa;
+}
 
-        /* Tabs */
-        .tabs {
-            display: flex;
-            gap: 0;
-            border-bottom: 2px solid var(--border);
-            margin-bottom: 32px;
-            overflow-x: auto;
-        }
-        .tab-btn {
-            background: none;
-            border: none;
-            color: var(--text2);
-            font-size: 0.9rem;
-            font-weight: 600;
-            padding: 12px 20px;
-            cursor: pointer;
-            border-bottom: 2px solid transparent;
-            margin-bottom: -2px;
-            transition: all 0.2s;
-            white-space: nowrap;
-        }
-        .tab-btn:hover { color: var(--text); }
-        .tab-btn.active {
-            color: var(--accent);
-            border-bottom-color: var(--accent);
-        }
-        .tab-content { display: none; }
-        .tab-content.active { display: block; }
+code, pre {
+  font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', 'JetBrains Mono', Consolas, monospace;
+}
 
-        /* Comparison table */
-        table {
-            width: 100%;
-            border-collapse: collapse;
-            font-size: 0.9rem;
-        }
-        th, td {
-            padding: 12px 16px;
-            text-align: left;
-            border-bottom: 1px solid var(--border);
-        }
-        th {
-            font-weight: 600;
-            color: var(--text2);
-            font-size: 0.8rem;
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-        }
-        td:first-child { font-weight: 500; }
-        .check { color: var(--accent2); }
-        .cross { color: #ef4444; }
+/* ── Navigation ─────────────────────────────────────────────── */
 
-        /* Benchmark bars */
-        .bench-row {
-            display: flex;
-            align-items: center;
-            gap: 16px;
-            margin-bottom: 16px;
-        }
-        .bench-label {
-            width: 200px;
-            font-size: 0.9rem;
-            color: var(--text2);
-            flex-shrink: 0;
-        }
-        .bench-bars {
-            flex: 1;
-            display: flex;
-            flex-direction: column;
-            gap: 4px;
-        }
-        .bench-bar {
-            height: 24px;
-            border-radius: 4px;
-            display: flex;
-            align-items: center;
-            padding: 0 10px;
-            font-size: 0.75rem;
-            font-weight: 600;
-            color: #fff;
-            min-width: 40px;
-        }
-        .bench-bar.rsync { background: #374151; }
-        .bench-bar.resync { background: var(--accent); }
-        .bench-speedup {
-            width: 80px;
-            text-align: right;
-            font-weight: 700;
-            color: var(--accent2);
-            font-size: 0.9rem;
-            flex-shrink: 0;
-        }
+nav {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 100;
+  background: rgba(10, 14, 23, 0.85);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--border);
+  padding: 0 2rem;
+  height: 56px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  transition: background 0.3s, border-color 0.3s;
+}
 
-        /* Feature grid */
-        .feature-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-            gap: 24px;
-        }
-        .feature-card {
-            background: var(--bg2);
-            border: 1px solid var(--border);
-            border-radius: 10px;
-            padding: 24px;
-            transition: border-color 0.2s;
-        }
-        .feature-card:hover { border-color: var(--accent); }
-        .feature-card h3 {
-            font-size: 1.1rem;
-            font-weight: 700;
-            margin-bottom: 8px;
-        }
-        .feature-card p {
-            color: var(--text2);
-            font-size: 0.9rem;
-        }
+.nav-brand {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  letter-spacing: -0.5px;
+}
+.nav-brand span {
+  color: var(--accent);
+}
 
-        /* Architecture diagram */
-        .arch-box {
-            background: var(--bg2);
-            border: 1px solid var(--border);
-            border-radius: 10px;
-            padding: 32px;
-            font-family: 'Fira Code', 'SF Mono', monospace;
-            font-size: 0.82rem;
-            line-height: 1.5;
-            overflow-x: auto;
-            color: var(--text2);
-            white-space: pre;
-        }
+.nav-links {
+  display: flex;
+  gap: 1.75rem;
+  list-style: none;
+}
+.nav-links a {
+  color: var(--text-secondary);
+  font-size: 0.875rem;
+  font-weight: 500;
+  transition: color 0.2s;
+}
+.nav-links a:hover {
+  color: var(--text-primary);
+}
 
-        /* Carbon section */
-        .carbon-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-            gap: 20px;
-        }
-        .carbon-stat {
-            background: var(--bg2);
-            border: 1px solid var(--border);
-            border-radius: 10px;
-            padding: 24px;
-            text-align: center;
-        }
-        .carbon-stat .big-num {
-            font-size: 2.5rem;
-            font-weight: 800;
-            color: var(--accent2);
-            line-height: 1;
-        }
-        .carbon-stat .label {
-            color: var(--text2);
-            font-size: 0.9rem;
-            margin-top: 8px;
-        }
+.nav-github {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.375rem 0.875rem;
+  border: 1px solid var(--border-light);
+  border-radius: 6px;
+  color: var(--text-secondary);
+  font-size: 0.8125rem;
+  font-weight: 500;
+  transition: all 0.2s;
+}
+.nav-github:hover {
+  border-color: var(--accent);
+  color: var(--text-primary);
+}
+.nav-github svg {
+  width: 16px;
+  height: 16px;
+  fill: currentColor;
+}
 
-        /* Quote */
-        blockquote {
-            background: var(--bg2);
-            border-left: 3px solid var(--accent);
-            border-radius: 0 8px 8px 0;
-            padding: 20px 24px;
-            margin: 24px 0;
-            color: var(--text2);
-            font-style: italic;
-        }
+.nav-toggle {
+  display: none;
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 0.25rem;
+}
+.nav-toggle svg {
+  width: 24px;
+  height: 24px;
+  stroke: currentColor;
+  fill: none;
+}
 
-        /* Footer */
-        footer {
-            border-top: 1px solid var(--border);
-            padding: 40px 0;
-            text-align: center;
-            color: var(--text2);
-            font-size: 0.85rem;
-        }
+/* ── Layout ──────────────────────────────────────────────────── */
 
-        @media (max-width: 768px) {
-            .hero h1 { font-size: 2.2rem; }
-            .bench-label { width: 120px; font-size: 0.8rem; }
-            .bench-speedup { width: 60px; font-size: 0.8rem; }
-            nav .nav-links { gap: 12px; }
-            nav .nav-links a { font-size: 0.8rem; }
-        }
-    </style>
+.container {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 0 1.5rem;
+}
+
+section {
+  padding: 5rem 0;
+}
+
+.section-label {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  color: var(--accent);
+  font-weight: 600;
+  margin-bottom: 0.75rem;
+}
+
+.section-title {
+  font-size: 2.25rem;
+  font-weight: 700;
+  letter-spacing: -0.75px;
+  margin-bottom: 1rem;
+}
+
+.section-desc {
+  color: var(--text-secondary);
+  max-width: 640px;
+  font-size: 1.0625rem;
+  margin-bottom: 3rem;
+}
+
+/* ── Hero ────────────────────────────────────────────────────── */
+
+.hero {
+  padding: 10rem 0 6rem;
+  text-align: center;
+  position: relative;
+}
+.hero::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 600px;
+  height: 600px;
+  background: radial-gradient(circle, var(--accent-glow) 0%, transparent 70%);
+  pointer-events: none;
+  z-index: 0;
+}
+.hero-content {
+  position: relative;
+  z-index: 1;
+}
+.hero h1 {
+  font-size: 4.5rem;
+  font-weight: 800;
+  letter-spacing: -2px;
+  line-height: 1.1;
+  margin-bottom: 1.25rem;
+  background: linear-gradient(135deg, #fff 0%, #94a3b8 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+.hero-sub {
+  font-size: 1.375rem;
+  color: var(--text-secondary);
+  max-width: 600px;
+  margin: 0 auto 1rem;
+  font-weight: 400;
+  line-height: 1.6;
+}
+.hero-tagline {
+  font-size: 0.9375rem;
+  color: var(--text-muted);
+  margin-bottom: 3rem;
+}
+.hero-tagline strong {
+  color: var(--accent);
+  font-weight: 600;
+}
+.hero-actions {
+  display: flex;
+  gap: 1rem;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.75rem 1.75rem;
+  border-radius: 8px;
+  font-size: 0.9375rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  border: none;
+}
+.btn-primary {
+  background: var(--accent);
+  color: #fff;
+}
+.btn-primary:hover {
+  background: var(--accent-dim);
+  color: #fff;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 20px rgba(59, 130, 246, 0.3);
+}
+.btn-secondary {
+  background: transparent;
+  color: var(--text-primary);
+  border: 1px solid var(--border-light);
+}
+.btn-secondary:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  transform: translateY(-1px);
+}
+
+/* ── Install ─────────────────────────────────────────────────── */
+
+.install-section {
+  padding: 2rem 0 5rem;
+}
+
+.install-box {
+  max-width: 640px;
+  margin: 0 auto;
+  background: var(--bg-code);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.install-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.625rem 1rem;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+}
+
+.install-dots {
+  display: flex;
+  gap: 6px;
+}
+.install-dots span {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--border-light);
+}
+
+.install-label {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.install-copy {
+  background: none;
+  border: 1px solid var(--border-light);
+  color: var(--text-muted);
+  font-size: 0.6875rem;
+  padding: 0.25rem 0.625rem;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.2s;
+  font-family: inherit;
+}
+.install-copy:hover {
+  border-color: var(--accent);
+  color: var(--text-primary);
+}
+
+.install-body {
+  padding: 1.25rem 1.5rem;
+}
+.install-body pre {
+  color: var(--text-primary);
+  font-size: 0.9375rem;
+  line-height: 1.8;
+  white-space: pre;
+  overflow-x: auto;
+}
+.install-body .prompt { color: var(--success); user-select: none; }
+.install-body .cmd    { color: var(--text-primary); }
+.install-body .cmt    { color: var(--text-muted); }
+
+/* ── Features Grid ───────────────────────────────────────────── */
+
+.features-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1.25rem;
+}
+
+.feature-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1.75rem;
+  transition: border-color 0.25s, transform 0.25s;
+}
+.feature-card:hover {
+  border-color: var(--border-light);
+  transform: translateY(-2px);
+}
+
+.feature-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 1rem;
+  font-size: 0.8125rem;
+  font-weight: 700;
+  font-family: inherit;
+  letter-spacing: -0.5px;
+}
+.feature-icon.blue  { background: rgba(59, 130, 246, 0.12); color: var(--accent); }
+.feature-icon.green { background: rgba(16, 185, 129, 0.12); color: var(--success); }
+.feature-icon.amber { background: rgba(245, 158, 11, 0.12); color: var(--warning); }
+
+.feature-card h3 {
+  font-size: 1rem;
+  font-weight: 600;
+  margin-bottom: 0.5rem;
+}
+.feature-card p {
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+  line-height: 1.6;
+}
+
+/* ── Comparison Table ────────────────────────────────────────── */
+
+.comparison-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.comparison-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9375rem;
+}
+.comparison-table thead {
+  background: var(--bg-secondary);
+}
+.comparison-table th {
+  padding: 1rem 1.25rem;
+  text-align: left;
+  font-weight: 600;
+  font-size: 0.8125rem;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--border);
+}
+.comparison-table th:first-child {
+  width: 38%;
+}
+.comparison-table td {
+  padding: 0.875rem 1.25rem;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+.comparison-table tbody tr:last-child td {
+  border-bottom: none;
+}
+.comparison-table tbody tr:hover {
+  background: rgba(59, 130, 246, 0.03);
+}
+.feature-name {
+  font-weight: 500;
+  color: var(--text-primary);
+}
+.val-good    { color: var(--success); font-weight: 600; }
+.val-bad     { color: var(--danger);  font-weight: 500; }
+.val-neutral { color: var(--text-secondary); }
+
+/* ── Benchmark Bars ──────────────────────────────────────────── */
+
+.benchmark-grid {
+  display: grid;
+  gap: 1.5rem;
+}
+
+.bench-row {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1.5rem;
+}
+
+.bench-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 1rem;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+.bench-label {
+  font-weight: 600;
+  font-size: 0.9375rem;
+}
+.bench-speedup {
+  font-size: 0.875rem;
+  font-weight: 700;
+  color: var(--success);
+  white-space: nowrap;
+}
+
+.bench-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.bar-group {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+.bar-label {
+  flex-shrink: 0;
+  width: 60px;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  text-align: right;
+  font-weight: 500;
+}
+.bar-track {
+  flex: 1;
+  height: 28px;
+  background: var(--bg-primary);
+  border-radius: 4px;
+  overflow: hidden;
+  position: relative;
+}
+.bar-fill {
+  height: 100%;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  padding-left: 0.75rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #fff;
+  width: 0;
+  transition: width 1.2s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.bar-fill.rsync {
+  background: linear-gradient(90deg, #374151, #4b5563);
+}
+.bar-fill.resync {
+  background: linear-gradient(90deg, var(--accent-dim), var(--accent));
+}
+.bar-value {
+  white-space: nowrap;
+}
+
+.bench-env {
+  margin-top: 3rem;
+  padding: 1.25rem 1.5rem;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+  line-height: 1.8;
+}
+.bench-env strong {
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+
+/* ── Architecture ────────────────────────────────────────────── */
+
+.arch-diagram {
+  background: var(--bg-code);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 2rem;
+  overflow-x: auto;
+}
+.arch-diagram pre {
+  font-size: 0.8125rem;
+  line-height: 1.6;
+  color: var(--text-secondary);
+  white-space: pre;
+  text-align: center;
+}
+.hl-blue  { color: var(--accent);  font-weight: 600; }
+.hl-green { color: var(--success); font-weight: 600; }
+.hl-amber { color: var(--warning); font-weight: 600; }
+
+.arch-legend {
+  display: flex;
+  gap: 2rem;
+  margin-top: 1.5rem;
+  flex-wrap: wrap;
+}
+.arch-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+}
+.arch-legend-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+/* ── Quick Start ─────────────────────────────────────────────── */
+
+.quickstart-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 1.25rem;
+}
+
+.code-block {
+  background: var(--bg-code);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.code-title {
+  padding: 0.625rem 1rem;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.code-body {
+  padding: 1.25rem 1.5rem;
+  overflow-x: auto;
+}
+.code-body pre {
+  font-size: 0.8125rem;
+  line-height: 1.7;
+  color: var(--text-primary);
+}
+.code-body .c { color: var(--text-muted); }
+.code-body .s { color: var(--success); }
+.code-body .f { color: var(--accent); }
+.code-body .w { color: var(--warning); }
+
+/* ── Footer ──────────────────────────────────────────────────── */
+
+footer {
+  border-top: 1px solid var(--border);
+  padding: 3rem 0;
+  margin-top: 2rem;
+}
+
+.footer-inner {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 2rem;
+}
+
+.footer-brand {
+  font-size: 1.125rem;
+  font-weight: 700;
+  margin-bottom: 0.5rem;
+}
+.footer-brand span {
+  color: var(--accent);
+}
+.footer-tagline {
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+}
+
+.footer-links {
+  display: flex;
+  gap: 3rem;
+}
+.footer-col h4 {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--text-muted);
+  font-weight: 600;
+  margin-bottom: 0.75rem;
+}
+.footer-col ul {
+  list-style: none;
+}
+.footer-col li {
+  margin-bottom: 0.375rem;
+}
+.footer-col a {
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+}
+.footer-col a:hover {
+  color: var(--text-primary);
+}
+
+.footer-bottom {
+  margin-top: 2.5rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--border);
+  text-align: center;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+/* ── Scroll Animations ───────────────────────────────────────── */
+
+.fade-in {
+  opacity: 0;
+  transform: translateY(20px);
+  transition: opacity 0.6s ease, transform 0.6s ease;
+}
+.fade-in.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* ── Responsive ──────────────────────────────────────────────── */
+
+@media (max-width: 900px) {
+  .features-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .quickstart-grid {
+    grid-template-columns: 1fr;
+  }
+  .hero h1 {
+    font-size: 3rem;
+  }
+}
+
+@media (max-width: 640px) {
+  nav {
+    padding: 0 1rem;
+  }
+  .nav-links {
+    display: none;
+    position: absolute;
+    top: 56px;
+    left: 0;
+    right: 0;
+    flex-direction: column;
+    background: var(--bg-primary);
+    border-bottom: 1px solid var(--border);
+    padding: 1rem 1.5rem;
+    gap: 1rem;
+  }
+  .nav-links.open {
+    display: flex;
+  }
+  .nav-toggle {
+    display: block;
+  }
+  .nav-github {
+    display: none;
+  }
+  .features-grid {
+    grid-template-columns: 1fr;
+  }
+  .hero {
+    padding: 7rem 0 4rem;
+  }
+  .hero h1 {
+    font-size: 2.5rem;
+  }
+  .hero-sub {
+    font-size: 1.125rem;
+  }
+  .section-title {
+    font-size: 1.75rem;
+  }
+  .footer-links {
+    gap: 2rem;
+  }
+  .footer-inner {
+    flex-direction: column;
+  }
+  .arch-diagram {
+    padding: 1rem;
+  }
+  .arch-diagram pre {
+    font-size: 0.625rem;
+    text-align: left;
+  }
+  .comparison-table {
+    font-size: 0.8125rem;
+  }
+  .comparison-table th,
+  .comparison-table td {
+    padding: 0.625rem 0.75rem;
+  }
+  .bar-label {
+    width: 48px;
+    font-size: 0.6875rem;
+  }
+}
+</style>
 </head>
 <body>
 
+<!-- ═══════════════════════════ NAVIGATION ═══════════════════════════ -->
+
 <nav>
-    <div class="nav-inner">
-        <div class="logo">resync<span>-rs</span></div>
-        <div class="nav-links">
-            <a href="#performance">Performance</a>
-            <a href="#features">Features</a>
-            <a href="#architecture">Architecture</a>
-            <a href="#about">About</a>
-            <a href="https://github.com/vedLinuxian/resync-rs">GitHub</a>
-        </div>
-    </div>
+  <a href="#" class="nav-brand">re<span>sync</span></a>
+  <ul class="nav-links" id="navLinks">
+    <li><a href="#features">Features</a></li>
+    <li><a href="#comparison">Comparison</a></li>
+    <li><a href="#benchmarks">Benchmarks</a></li>
+    <li><a href="#architecture">Architecture</a></li>
+    <li><a href="#quickstart">Quick Start</a></li>
+  </ul>
+  <a href="https://github.com/vedLinuxian/resync-rs" class="nav-github" target="_blank" rel="noopener">
+    <svg viewBox="0 0 16 16"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+    Source
+  </a>
+  <button class="nav-toggle" id="navToggle" aria-label="Toggle navigation">
+    <svg viewBox="0 0 24 24"><path d="M3 6h18M3 12h18M3 18h18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+  </button>
 </nav>
 
-<!-- Hero -->
+<!-- ═══════════════════════════ HERO ═══════════════════════════ -->
+
 <header class="hero">
-    <div class="container">
-        <h1>rsync, <span class="highlight">reimagined</span></h1>
-        <p class="subtitle">
-            A ground-up rewrite in Rust. Parallel hashing with BLAKE3,
-            zero-copy I/O with mmap + copy_file_range, FastCDC delta encoding.
-            Up to 93x faster than rsync on modern hardware.
-        </p>
-        <div class="cta">
-            <a href="https://github.com/vedLinuxian/resync-rs" class="primary">View on GitHub</a>
-            <a href="#getting-started" class="secondary">Get Started</a>
-        </div>
-        <div class="install-box">
-            <span class="prompt">$</span> cargo install resync-rs
-        </div>
+  <div class="container hero-content">
+    <h1>resync</h1>
+    <p class="hero-sub">rsync reimagined in Rust. Parallel. Zero-copy. Unstoppable.</p>
+    <p class="hero-tagline"><strong>2-6x faster</strong> than rsync on real-world workloads. Drop-in replacement with rsync flag compatibility.</p>
+    <div class="hero-actions">
+      <a href="#install" class="btn btn-primary">Install</a>
+      <a href="https://github.com/vedLinuxian/resync-rs" class="btn btn-secondary" target="_blank" rel="noopener">View Source</a>
     </div>
+  </div>
 </header>
 
-<!-- Performance -->
-<section id="performance">
-    <div class="container">
-        <h2>Performance</h2>
-        <p class="section-desc">
-            Benchmarked on 100,000 files of mixed sizes on an NVMe SSD
-            with a 16-core CPU. All times are wall-clock, cold cache.
-        </p>
+<!-- ═══════════════════════════ INSTALL ═══════════════════════════ -->
 
-        <div class="bench-row">
-            <div class="bench-label">Initial full copy</div>
-            <div class="bench-bars">
-                <div class="bench-bar rsync" style="width: 100%">rsync 47.3s</div>
-                <div class="bench-bar resync" style="width: 4.4%">2.1s</div>
-            </div>
-            <div class="bench-speedup">22.5x</div>
-        </div>
-        <div class="bench-row">
-            <div class="bench-label">Incremental (1% changed)</div>
-            <div class="bench-bars">
-                <div class="bench-bar rsync" style="width: 50%">rsync 23.8s</div>
-                <div class="bench-bar resync" style="width: 0.8%">0.4s</div>
-            </div>
-            <div class="bench-speedup">59.5x</div>
-        </div>
-        <div class="bench-row">
-            <div class="bench-label">No changes (verify)</div>
-            <div class="bench-bars">
-                <div class="bench-bar rsync" style="width: 39%">rsync 18.6s</div>
-                <div class="bench-bar resync" style="width: 0.4%">0.2s</div>
-            </div>
-            <div class="bench-speedup">93.0x</div>
-        </div>
-        <div class="bench-row">
-            <div class="bench-label">Large files (10x 1GB)</div>
-            <div class="bench-bars">
-                <div class="bench-bar rsync" style="width: 100%">rsync 89.4s</div>
-                <div class="bench-bar resync" style="width: 4.7%">4.2s</div>
-            </div>
-            <div class="bench-speedup">21.3x</div>
-        </div>
-        <div class="bench-row">
-            <div class="bench-label">Many small files (100K)</div>
-            <div class="bench-bars">
-                <div class="bench-bar rsync" style="width: 100%">rsync 52.7s</div>
-                <div class="bench-bar resync" style="width: 3.4%">1.8s</div>
-            </div>
-            <div class="bench-speedup">29.3x</div>
-        </div>
+<section class="install-section" id="install">
+  <div class="container">
+    <div class="install-box fade-in">
+      <div class="install-header">
+        <div class="install-dots"><span></span><span></span><span></span></div>
+        <span class="install-label">Terminal</span>
+        <button class="install-copy" onclick="copyInstall()" id="copyBtn">Copy</button>
+      </div>
+      <div class="install-body">
+        <pre><span class="cmt"># Install from crates.io</span>
+<span class="prompt">$</span> <span class="cmd">cargo install resync-rs</span>
+
+<span class="cmt"># Or build from source</span>
+<span class="prompt">$</span> <span class="cmd">git clone https://github.com/vedLinuxian/resync-rs.git</span>
+<span class="prompt">$</span> <span class="cmd">cd resync-rs &amp;&amp; cargo build --release</span>
+
+<span class="cmt"># Verify installation</span>
+<span class="prompt">$</span> <span class="cmd">resync --version</span></pre>
+      </div>
     </div>
+  </div>
 </section>
 
-<!-- Features -->
+<!-- ═══════════════════════════ FEATURES ═══════════════════════════ -->
+
 <section id="features">
-    <div class="container">
-        <h2>Features</h2>
-        <p class="section-desc">
-            Full rsync compatibility plus modern performance primitives.
-        </p>
+  <div class="container">
+    <div class="section-label fade-in">Capabilities</div>
+    <h2 class="section-title fade-in">Engineered for speed at every layer</h2>
+    <p class="section-desc fade-in">Every component of resync was designed from scratch to exploit modern hardware -- SIMD hashing, work-stealing parallelism, zero-copy I/O, and lock-free data paths.</p>
 
-        <div class="feature-grid">
-            <div class="feature-card">
-                <h3>BLAKE3 SIMD Hashing</h3>
-                <p>256-bit cryptographic hashing with automatic AVX-512, AVX2, NEON, and SSE4.1 acceleration. 10-15x faster than MD5 at double the security margin.</p>
-            </div>
-            <div class="feature-card">
-                <h3>Content-Defined Chunking</h3>
-                <p>FastCDC with Gear hashing preserves chunk boundaries across insertions and deletions. A 1-byte edit in a 1 GB file transfers only ~8 KB.</p>
-            </div>
-            <div class="feature-card">
-                <h3>Zero-Copy I/O</h3>
-                <p>Memory-mapped files with madvise(SEQUENTIAL) hints. New files copied via copy_file_range(2) -- data never enters userspace.</p>
-            </div>
-            <div class="feature-card">
-                <h3>Parallel Everything</h3>
-                <p>Directory scanning, chunk hashing, delta computation, and file writing all run on a rayon work-stealing thread pool that saturates all CPU cores.</p>
-            </div>
-            <div class="feature-card">
-                <h3>Atomic Crash Safety</h3>
-                <p>Every file is written to a uniquely-named temp file, then atomically renamed. A crash or power failure never leaves a corrupt destination.</p>
-            </div>
-            <div class="feature-card">
-                <h3>Native TLS 1.3</h3>
-                <p>Built-in transport encryption via rustls. No OpenSSL dependency. Certificate verification. Memory-safe implementation.</p>
-            </div>
-            <div class="feature-card">
-                <h3>rsync-Compatible CLI</h3>
-                <p>Drop-in replacement. Same flags (-avz, --delete, --exclude, --link-dest), same behavior, same muscle memory.</p>
-            </div>
-            <div class="feature-card">
-                <h3>Smart fsync Control</h3>
-                <p>No fsync by default (rsync fsyncs every file). Use --fsync when durability matters. Saves ~15s per 100K small files.</p>
-            </div>
-        </div>
+    <div class="features-grid">
+      <div class="feature-card fade-in">
+        <div class="feature-icon blue">B3</div>
+        <h3>BLAKE3 Hashing</h3>
+        <p>SIMD-accelerated BLAKE3 with AVX-512 support. Cryptographically strong, unlike rsync's broken MD5. Processes data at memory bandwidth on modern CPUs.</p>
+      </div>
 
-        <!-- Comparison table -->
-        <h3 style="margin-top:48px; margin-bottom:16px;">Feature Comparison</h3>
-        <table>
-            <thead>
-                <tr>
-                    <th>Feature</th>
-                    <th>rsync</th>
-                    <th>resync-rs</th>
-                </tr>
-            </thead>
-            <tbody>
-                <tr><td>Hash algorithm</td><td>MD5 (128-bit, broken)</td><td>BLAKE3 (256-bit, SIMD)</td></tr>
-                <tr><td>Parallelism</td><td>Single-threaded</td><td>Rayon work-stealing (all cores)</td></tr>
-                <tr><td>File I/O</td><td>read()/write() syscalls</td><td>mmap + madvise + copy_file_range</td></tr>
-                <tr><td>Chunking</td><td>Fixed-size only</td><td>FastCDC + fixed-size</td></tr>
-                <tr><td>Compression</td><td>zlib (slow)</td><td>zstd (10x faster)</td></tr>
-                <tr><td>TLS</td><td>Via external stunnel</td><td>Native TLS 1.3 (rustls)</td></tr>
-                <tr><td>Directory scan</td><td>Sequential stat()</td><td>Parallel jwalk</td></tr>
-                <tr><td>fsync behavior</td><td>Always</td><td>Off by default (--fsync)</td></tr>
-                <tr><td>Zero-copy</td><td class="cross">No</td><td class="check">Yes</td></tr>
-                <tr><td>Memory safety</td><td class="cross">C (manual)</td><td class="check">Rust (compiler-enforced)</td></tr>
-            </tbody>
-        </table>
+      <div class="feature-card fade-in">
+        <div class="feature-icon green">||</div>
+        <h3>Rayon Parallelism</h3>
+        <p>Work-stealing thread pool saturates all CPU cores automatically. File scanning, hashing, and delta computation run fully parallel -- rsync is single-threaded.</p>
+      </div>
+
+      <div class="feature-card fade-in">
+        <div class="feature-icon amber">0C</div>
+        <h3>Zero-Copy I/O</h3>
+        <p>Memory-mapped files via mmap with madvise hints. Data moves kernel-to-kernel with copy_file_range(2). No userspace buffer copies on supported kernels.</p>
+      </div>
+
+      <div class="feature-card fade-in">
+        <div class="feature-icon blue">CDC</div>
+        <h3>Content-Defined Chunking</h3>
+        <p>FastCDC with Gear rolling hash for shift-resistant boundaries. Insertions and deletions only affect local chunks, minimizing transfer deltas.</p>
+      </div>
+
+      <div class="feature-card fade-in">
+        <div class="feature-icon green">Zs</div>
+        <h3>Zstd Compression</h3>
+        <p>Facebook's Zstandard replaces zlib: 10x faster compression at equivalent ratios. Adaptive compression levels based on available bandwidth.</p>
+      </div>
+
+      <div class="feature-card fade-in">
+        <div class="feature-icon amber">TLS</div>
+        <h3>Native TLS 1.3</h3>
+        <p>Built on rustls -- a memory-safe TLS implementation. No OpenSSL dependency. TLS 1.3 only: faster handshakes, forward secrecy by default.</p>
+      </div>
+
+      <div class="feature-card fade-in">
+        <div class="feature-icon green">At</div>
+        <h3>Atomic Writes</h3>
+        <p>Crash-safe by design. Writes go to a temp file, then atomically renamed via rename(2). fallocate(2) pre-allocation eliminates fragmentation. No partial files, ever.</p>
+      </div>
+
+      <div class="feature-card fade-in">
+        <div class="feature-icon blue">HP</div>
+        <h3>Huge Pages</h3>
+        <p>MADV_HUGEPAGE for transparent huge page support on large files. Reduces TLB misses by orders of magnitude for multi-gigabyte datasets.</p>
+      </div>
+
+      <div class="feature-card fade-in">
+        <div class="feature-icon amber">ns</div>
+        <h3>Nanosecond Precision</h3>
+        <p>utimensat(2) preserves file timestamps with nanosecond granularity. Sparse file support, append mode, and one-file-system boundaries handled natively.</p>
+      </div>
     </div>
+  </div>
 </section>
 
-<!-- Architecture -->
+<!-- ═══════════════════════════ COMPARISON ═══════════════════════════ -->
+
+<section id="comparison">
+  <div class="container">
+    <div class="section-label fade-in">Head to Head</div>
+    <h2 class="section-title fade-in">rsync vs resync</h2>
+    <p class="section-desc fade-in">A direct comparison of the technologies under the hood.</p>
+
+    <div class="comparison-wrap fade-in">
+      <table class="comparison-table">
+        <thead>
+          <tr>
+            <th>Capability</th>
+            <th>rsync</th>
+            <th>resync</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="feature-name">Hash Algorithm</td>
+            <td class="val-bad">MD5 (broken)</td>
+            <td class="val-good">BLAKE3 + SIMD / AVX-512</td>
+          </tr>
+          <tr>
+            <td class="feature-name">Parallelism</td>
+            <td class="val-bad">Single-threaded</td>
+            <td class="val-good">Rayon work-stealing (all cores)</td>
+          </tr>
+          <tr>
+            <td class="feature-name">I/O Strategy</td>
+            <td class="val-neutral">read(2) + write(2)</td>
+            <td class="val-good">mmap + copy_file_range(2)</td>
+          </tr>
+          <tr>
+            <td class="feature-name">Chunking</td>
+            <td class="val-neutral">Fixed-size blocks</td>
+            <td class="val-good">FastCDC (Gear rolling hash)</td>
+          </tr>
+          <tr>
+            <td class="feature-name">Compression</td>
+            <td class="val-bad">zlib (slow)</td>
+            <td class="val-good">Zstd (10x faster)</td>
+          </tr>
+          <tr>
+            <td class="feature-name">TLS</td>
+            <td class="val-bad">OpenSSL (C, CVE-prone)</td>
+            <td class="val-good">rustls TLS 1.3 (memory-safe)</td>
+          </tr>
+          <tr>
+            <td class="feature-name">Memory Safety</td>
+            <td class="val-bad">C (manual management)</td>
+            <td class="val-good">Rust (compile-time guarantees)</td>
+          </tr>
+          <tr>
+            <td class="feature-name">Write Safety</td>
+            <td class="val-neutral">Partial file risk</td>
+            <td class="val-good">Atomic temp + rename</td>
+          </tr>
+          <tr>
+            <td class="feature-name">Pre-allocation</td>
+            <td class="val-bad">None</td>
+            <td class="val-good">fallocate(2), zero fragmentation</td>
+          </tr>
+          <tr>
+            <td class="feature-name">Timestamp Precision</td>
+            <td class="val-neutral">Microsecond</td>
+            <td class="val-good">Nanosecond (utimensat)</td>
+          </tr>
+          <tr>
+            <td class="feature-name">Large File Optimization</td>
+            <td class="val-bad">None</td>
+            <td class="val-good">MADV_HUGEPAGE, transparent huge pages</td>
+          </tr>
+          <tr>
+            <td class="feature-name">Network Protocol</td>
+            <td class="val-neutral">Custom text-based</td>
+            <td class="val-good">Binary protocol, push mode</td>
+          </tr>
+          <tr>
+            <td class="feature-name">CLI Compatibility</td>
+            <td class="val-neutral">--</td>
+            <td class="val-good">100% rsync flag compatible</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════ BENCHMARKS ═══════════════════════════ -->
+
+<section id="benchmarks">
+  <div class="container">
+    <div class="section-label fade-in">Performance</div>
+    <h2 class="section-title fade-in">Real benchmarks</h2>
+    <p class="section-desc fade-in">Measured on a local machine with NVMe storage and rsync 3.2.7. Warm-cache results. Run <code>bash bench/benchmark.sh</code> to reproduce on your hardware.</p>
+
+    <div class="benchmark-grid" id="benchChart">
+
+      <div class="bench-row fade-in">
+        <div class="bench-header">
+          <span class="bench-label">1K Small Files -- Full Copy</span>
+          <span class="bench-speedup">3.3x faster</span>
+        </div>
+        <div class="bench-bars">
+          <div class="bar-group">
+            <span class="bar-label">rsync</span>
+            <div class="bar-track"><div class="bar-fill rsync" data-width="100"><span class="bar-value">0.117s</span></div></div>
+          </div>
+          <div class="bar-group">
+            <span class="bar-label">resync</span>
+            <div class="bar-track"><div class="bar-fill resync" data-width="30"><span class="bar-value">0.035s</span></div></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="bench-row fade-in">
+        <div class="bench-header">
+          <span class="bench-label">1K Small Files -- No Changes</span>
+          <span class="bench-speedup">5.6x faster</span>
+        </div>
+        <div class="bench-bars">
+          <div class="bar-group">
+            <span class="bar-label">rsync</span>
+            <div class="bar-track"><div class="bar-fill rsync" data-width="100"><span class="bar-value">0.056s</span></div></div>
+          </div>
+          <div class="bar-group">
+            <span class="bar-label">resync</span>
+            <div class="bar-track"><div class="bar-fill resync" data-width="18"><span class="bar-value">0.010s</span></div></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="bench-row fade-in">
+        <div class="bench-header">
+          <span class="bench-label">10K Small Files -- Full Copy</span>
+          <span class="bench-speedup">2.5x faster</span>
+        </div>
+        <div class="bench-bars">
+          <div class="bar-group">
+            <span class="bar-label">rsync</span>
+            <div class="bar-track"><div class="bar-fill rsync" data-width="100"><span class="bar-value">0.395s</span></div></div>
+          </div>
+          <div class="bar-group">
+            <span class="bar-label">resync</span>
+            <div class="bar-track"><div class="bar-fill resync" data-width="40"><span class="bar-value">0.158s</span></div></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="bench-row fade-in">
+        <div class="bench-header">
+          <span class="bench-label">10K Small Files -- No Changes</span>
+          <span class="bench-speedup">1.8x faster</span>
+        </div>
+        <div class="bench-bars">
+          <div class="bar-group">
+            <span class="bar-label">rsync</span>
+            <div class="bar-track"><div class="bar-fill rsync" data-width="100"><span class="bar-value">0.131s</span></div></div>
+          </div>
+          <div class="bar-group">
+            <span class="bar-label">resync</span>
+            <div class="bar-track"><div class="bar-fill resync" data-width="55"><span class="bar-value">0.072s</span></div></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="bench-row fade-in">
+        <div class="bench-header">
+          <span class="bench-label">3 x 100 MB Large Files -- Full Copy</span>
+          <span class="bench-speedup">3.6x faster</span>
+        </div>
+        <div class="bench-bars">
+          <div class="bar-group">
+            <span class="bar-label">rsync</span>
+            <div class="bar-track"><div class="bar-fill rsync" data-width="100"><span class="bar-value">1.423s</span></div></div>
+          </div>
+          <div class="bar-group">
+            <span class="bar-label">resync</span>
+            <div class="bar-track"><div class="bar-fill resync" data-width="27"><span class="bar-value">0.391s</span></div></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="bench-row fade-in">
+        <div class="bench-header">
+          <span class="bench-label">3 x 100 MB Large Files -- No Changes</span>
+          <span class="bench-speedup">6.5x faster</span>
+        </div>
+        <div class="bench-bars">
+          <div class="bar-group">
+            <span class="bar-label">rsync</span>
+            <div class="bar-track"><div class="bar-fill rsync" data-width="100"><span class="bar-value">0.052s</span></div></div>
+          </div>
+          <div class="bar-group">
+            <span class="bar-label">resync</span>
+            <div class="bar-track"><div class="bar-fill resync" data-width="15"><span class="bar-value">0.008s</span></div></div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <div class="bench-env fade-in">
+      <strong>Test Environment:</strong> Single machine, NVMe SSD, ext4, warm page cache, rsync 3.2.7. Speedups
+      will vary by hardware and workload. Run <code>bash bench/benchmark.sh</code> to get numbers for your system.
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════ ARCHITECTURE ═══════════════════════════ -->
+
 <section id="architecture">
-    <div class="container">
-        <h2>Architecture</h2>
-        <p class="section-desc">
-            A pipelined design where every stage runs in parallel.
-        </p>
-        <div class="arch-box">Scanner (jwalk, parallel)
-    |
-    v
-FilterEngine (exclude/include/size filters)
-    |
-    v
-Per-file decision (rayon thread pool)
-    |
-    +-- New file -------> Applier::copy_new()
-    |                     (copy_file_range / atomic tmp)
-    |
-    +-- Skip -----------> mtime+size / --size-only / --update
-    |
-    +-- Update ----------> Hasher (BLAKE3 + mmap + madvise)
-    |                         |
-    |                         v
-    |                      DeltaEngine (FastCDC chunks)
-    |                         |
-    |                         v
-    |                      Applier::apply() (atomic tmp + rename)
-    |
-    +-- Delete ----------> --delete / --max-delete safety limit</div>
+  <div class="container">
+    <div class="section-label fade-in">Internals</div>
+    <h2 class="section-title fade-in">Architecture</h2>
+    <p class="section-desc fade-in">A high-level view of the data pipeline from source to destination.</p>
+
+    <div class="arch-diagram fade-in">
+      <pre>
+    <span class="hl-blue">Source Tree</span>                                       <span class="hl-green">Destination Tree</span>
+        |                                                  |
+        v                                                  v
+  <span class="hl-blue">+-----------+</span>      +-----------+         +-----------+       <span class="hl-green">+-----------+</span>
+  <span class="hl-blue">|  Scanner  |</span>----&gt; |  Filter   | ------&gt; |  Hasher   | ----&gt; <span class="hl-green">|  Scanner  |</span>
+  <span class="hl-blue">| (parallel)|</span>      | (include/ |         | (BLAKE3   |       <span class="hl-green">| (parallel)|</span>
+  <span class="hl-blue">|  readdir  |</span>      |  exclude) |         |  AVX-512) |       <span class="hl-green">|  readdir  |</span>
+  <span class="hl-blue">+-----------+</span>      +-----------+         +-----------+       <span class="hl-green">+-----------+</span>
+                                                  |                       |
+                                                  v                       v
+                                            +-----------+           +-----------+
+                                            |   Delta   | &lt;-------- |   Delta   |
+                                            |   Engine  |           |   Engine  |
+                                            |  (FastCDC |           |  (FastCDC |
+                                            |   + Gear) |           |   + Gear) |
+                                            +-----------+           +-----------+
+                                                  |
+                                                  v
+                                      <span class="hl-amber">+-------------------+</span>
+                                      <span class="hl-amber">|   Sync Engine     |</span>
+                                      <span class="hl-amber">|                   |</span>
+                                      <span class="hl-amber">| copy_file_range() |</span>
+                                      <span class="hl-amber">| fallocate()       |</span>
+                                      <span class="hl-amber">| atomic rename     |</span>
+                                      <span class="hl-amber">| utimensat()       |</span>
+                                      <span class="hl-amber">+-------------------+</span>
+                                                  |
+                                            [Optional]
+                                                  |
+                                                  v
+                                      <span class="hl-amber">+-------------------+</span>
+                                      <span class="hl-amber">|    Network TX     |</span>
+                                      <span class="hl-amber">| Zstd + TLS 1.3    |</span>
+                                      <span class="hl-amber">| Binary Protocol   |</span>
+                                      <span class="hl-amber">+-------------------+</span>
+      </pre>
     </div>
+    <div class="arch-legend fade-in">
+      <div class="arch-legend-item">
+        <div class="arch-legend-dot" style="background: var(--accent);"></div>
+        Source-side operations
+      </div>
+      <div class="arch-legend-item">
+        <div class="arch-legend-dot" style="background: var(--success);"></div>
+        Destination-side operations
+      </div>
+      <div class="arch-legend-item">
+        <div class="arch-legend-dot" style="background: var(--warning);"></div>
+        Sync and transport layer
+      </div>
+    </div>
+  </div>
 </section>
 
-<!-- About tabs -->
-<section id="about">
-    <div class="container">
-        <h2>About</h2>
+<!-- ═══════════════════════════ QUICK START ═══════════════════════════ -->
 
-        <div class="tabs">
-            <button class="tab-btn active" onclick="switchTab(event, 'tab-why')">Why I Made This</button>
-            <button class="tab-btn" onclick="switchTab(event, 'tab-inspiration')">Inspiration</button>
-            <button class="tab-btn" onclick="switchTab(event, 'tab-carbon')">Carbon Footprint</button>
-            <button class="tab-btn" onclick="switchTab(event, 'tab-conduct')">Code of Conduct</button>
-            <button class="tab-btn" onclick="switchTab(event, 'tab-contributing')">Contributing</button>
-        </div>
+<section id="quickstart">
+  <div class="container">
+    <div class="section-label fade-in">Usage</div>
+    <h2 class="section-title fade-in">Quick start</h2>
+    <p class="section-desc fade-in">100% compatible with rsync flags. If you know rsync, you already know resync.</p>
 
-        <!-- Why I Made This -->
-        <div id="tab-why" class="tab-content active">
-            <p style="margin-bottom:16px;">
-                I have been using rsync for over a decade. It is one of the most
-                important tools in the Unix ecosystem -- reliable, ubiquitous,
-                and battle-tested.
-            </p>
-            <p style="margin-bottom:16px;">
-                But rsync was designed in 1996 for single-core CPUs, spinning hard
-                drives, and 10 Mbps networks. Modern hardware looks nothing like that:
-            </p>
-            <ul style="margin-left:20px; margin-bottom:16px; color:var(--text2);">
-                <li><strong>CPUs</strong> have 16-64 cores, but rsync uses exactly one.</li>
-                <li><strong>NVMe SSDs</strong> can sustain 7 GB/s reads, but rsync tops out at ~500 MB/s.</li>
-                <li><strong>Networks</strong> are 10-100 Gbps, but rsync cannot saturate even 1 Gbps for many small files.</li>
-                <li><strong>MD5</strong> is cryptographically broken with known collision attacks.</li>
-            </ul>
-            <p style="margin-bottom:16px;">
-                rsync cannot be fixed incrementally. Its architecture is fundamentally
-                single-threaded, and its C codebase makes memory-safe parallelism impractical.
-            </p>
-            <p>
-                resync-rs is a ground-up redesign: every stage is parallel, I/O is
-                zero-copy, hashing is BLAKE3 with SIMD, and the whole thing is
-                written in safe Rust. Same flags, same behavior, 10-90x faster.
-            </p>
-        </div>
+    <div class="quickstart-grid">
+      <div class="code-block fade-in">
+        <div class="code-title">Basic Sync</div>
+        <div class="code-body">
+          <pre><span class="c"># Mirror a directory (archive mode)</span>
+resync <span class="f">-avz</span> /src/ /dst/
 
-        <!-- Inspiration -->
-        <div id="tab-inspiration" class="tab-content">
-            <p style="margin-bottom:20px;">resync-rs stands on the shoulders of these projects:</p>
-            <ul style="margin-left:20px; color:var(--text2); line-height:2;">
-                <li><a href="https://rsync.samba.org/">rsync</a> by Andrew Tridgell and Paul Mackerras -- the original delta-sync algorithm that defined a generation of tools.</li>
-                <li><a href="https://github.com/BLAKE3-team/BLAKE3">BLAKE3</a> by Jack O'Connor et al. -- a parallel, SIMD-accelerated hash function.</li>
-                <li><a href="https://www.usenix.org/conference/atc16/technical-sessions/presentation/xia">FastCDC</a> by Wen Xia et al. -- the Gear-hash content-defined chunking algorithm.</li>
-                <li><a href="https://github.com/rayon-rs/rayon">rayon</a> -- Rust's data-parallelism library for safe, work-stealing concurrency.</li>
-                <li><a href="https://facebook.github.io/zstd/">zstd</a> by Yann Collet -- compression at 10x the speed of zlib.</li>
-                <li><a href="https://github.com/Byron/jwalk">jwalk</a> -- parallel directory traversal for Rust.</li>
-            </ul>
-        </div>
+<span class="c"># Sync with delete (remove extraneous files)</span>
+resync <span class="f">-avz</span> <span class="w">--delete</span> /src/ /dst/
 
-        <!-- Carbon Footprint -->
-        <div id="tab-carbon" class="tab-content">
-            <p style="margin-bottom:24px;">
-                resync-rs is designed to minimize energy consumption during file synchronization.
-            </p>
-            <div class="carbon-grid">
-                <div class="carbon-stat">
-                    <div class="big-num">98%</div>
-                    <div class="label">Less CPU time per incremental sync</div>
-                </div>
-                <div class="carbon-stat">
-                    <div class="big-num">96%</div>
-                    <div class="label">Less disk I/O per sync</div>
-                </div>
-                <div class="carbon-stat">
-                    <div class="big-num">100 kWh</div>
-                    <div class="label">Saved per server per year</div>
-                </div>
-                <div class="carbon-stat">
-                    <div class="big-num">45 kg</div>
-                    <div class="label">CO2 avoided per server per year</div>
-                </div>
-            </div>
-            <p style="margin-top:24px; color:var(--text2); font-size:0.9rem;">
-                SIMD hashing (BLAKE3) processes 16-64 bytes per CPU cycle, doing 10x less work
-                than MD5. Zero-copy I/O eliminates userspace buffer copies, cutting DRAM energy by 50%.
-                Content-defined chunking means a 1-byte edit transfers ~8 KB instead of the whole file.
-                Over a year of hourly backups, the energy savings add up to approximately 100 kWh per
-                server -- equivalent to removing 45 kg of CO2 emissions (US grid average).
-            </p>
+<span class="c"># Dry run -- preview changes first</span>
+resync <span class="f">-avzn</span> /src/ /dst/</pre>
         </div>
+      </div>
 
-        <!-- Code of Conduct -->
-        <div id="tab-conduct" class="tab-content">
-            <p style="margin-bottom:16px;">
-                We are committed to providing a welcoming, inclusive, and harassment-free
-                experience for everyone, regardless of background or identity.
-            </p>
-            <h3 style="margin-bottom:8px;">Expected behavior</h3>
-            <ul style="margin-left:20px; margin-bottom:16px; color:var(--text2);">
-                <li>Using welcoming and inclusive language</li>
-                <li>Being respectful of differing viewpoints</li>
-                <li>Gracefully accepting constructive criticism</li>
-                <li>Focusing on what is best for the community</li>
-            </ul>
-            <h3 style="margin-bottom:8px;">Unacceptable behavior</h3>
-            <ul style="margin-left:20px; margin-bottom:16px; color:var(--text2);">
-                <li>Harassment, trolling, or personal attacks</li>
-                <li>Publishing others' private information</li>
-                <li>Sexualized language or unwelcome attention</li>
-                <li>Other unprofessional conduct</li>
-            </ul>
-            <p>
-                Full details: <a href="https://github.com/vedLinuxian/resync-rs/blob/main/CODE_OF_CONDUCT.md">CODE_OF_CONDUCT.md</a>
-            </p>
-        </div>
+      <div class="code-block fade-in">
+        <div class="code-title">Remote Sync</div>
+        <div class="code-body">
+          <pre><span class="c"># Push to remote host</span>
+resync <span class="f">-avz</span> /data/ user@host:/backup/
 
-        <!-- Contributing -->
-        <div id="tab-contributing" class="tab-content">
-            <h3 style="margin-bottom:12px;">How to contribute</h3>
-            <ol style="margin-left:20px; margin-bottom:16px; color:var(--text2); line-height:2;">
-                <li>Fork the repository on GitHub</li>
-                <li>Clone your fork and create a feature branch</li>
-                <li>Make your changes with tests</li>
-                <li>Run <code style="background:var(--bg3);padding:2px 6px;border-radius:4px;">cargo test</code> and <code style="background:var(--bg3);padding:2px 6px;border-radius:4px;">cargo clippy</code></li>
-                <li>Submit a pull request</li>
-            </ol>
-            <h3 style="margin-bottom:12px;">Development setup</h3>
-            <div class="arch-box" style="font-size:0.85rem;">git clone https://github.com/vedLinuxian/resync-rs.git
-cd resync-rs
-cargo build
-cargo test
-cargo clippy</div>
-            <p style="margin-top:16px;">
-                Full guidelines: <a href="https://github.com/vedLinuxian/resync-rs/blob/main/CONTRIBUTING.md">CONTRIBUTING.md</a>
-            </p>
+<span class="c"># Pull from remote host</span>
+resync <span class="f">-avz</span> user@host:/data/ /local/
+
+<span class="c"># Custom SSH port</span>
+resync <span class="f">-avz</span> <span class="w">-e</span> <span class="s">"ssh -p 2222"</span> /src/ host:/dst/</pre>
         </div>
+      </div>
+
+      <div class="code-block fade-in">
+        <div class="code-title">Advanced Options</div>
+        <div class="code-body">
+          <pre><span class="c"># Append mode for growing log files</span>
+resync <span class="f">--append-verify</span> logs/ /backup/logs/
+
+<span class="c"># Stay on one filesystem</span>
+resync <span class="f">-avz</span> <span class="w">--one-file-system</span> / /mnt/bkup/
+
+<span class="c"># Include/exclude patterns</span>
+resync <span class="f">-avz</span> <span class="w">--exclude</span> <span class="s">"*.tmp"</span> \
+  <span class="w">--include</span> <span class="s">"*.rs"</span> src/ dst/</pre>
+        </div>
+      </div>
+
+      <div class="code-block fade-in">
+        <div class="code-title">Network Push Mode</div>
+        <div class="code-body">
+          <pre><span class="c"># Start resync daemon</span>
+resync <span class="f">--daemon</span> <span class="w">--port</span> <span class="s">8730</span>
+
+<span class="c"># Push with TLS encryption</span>
+resync <span class="f">-avz</span> <span class="w">--tls</span> /data/ \
+  resync://host:8730/module/
+
+<span class="c"># Bandwidth limit (10 MB/s)</span>
+resync <span class="f">-avz</span> <span class="w">--bwlimit</span>=<span class="s">10m</span> /src/ /dst/</pre>
+        </div>
+      </div>
     </div>
+  </div>
 </section>
 
-<!-- Getting started -->
-<section id="getting-started">
-    <div class="container">
-        <h2>Getting Started</h2>
-        <div class="arch-box" style="font-size:0.9rem;"># Install from crates.io
-cargo install resync-rs
-
-# Or build from source
-git clone https://github.com/vedLinuxian/resync-rs.git
-cd resync-rs
-cargo install --path .
-
-# Basic sync
-resync -avz /data/source/ /data/backup/
-
-# With progress and stats
-resync -avzP --stats /data/source/ /data/backup/
-
-# Incremental backup with hardlinks
-resync -aH --link-dest /backups/yesterday /src/ /backups/today/
-
-# Network push with TLS
-resync push -avz --tls /src/ server:2377:/dst/</div>
-    </div>
-</section>
+<!-- ═══════════════════════════ FOOTER ═══════════════════════════ -->
 
 <footer>
-    <div class="container">
-        <p>resync-rs -- MIT License -- Built with Rust</p>
-        <p style="margin-top:8px;">
-            <a href="https://github.com/vedLinuxian/resync-rs">GitHub</a>
-            &nbsp;&middot;&nbsp;
-            <a href="https://crates.io/crates/resync-rs">Crates.io</a>
-            &nbsp;&middot;&nbsp;
-            <a href="https://github.com/vedLinuxian/resync-rs/blob/main/LICENSE">License</a>
-        </p>
+  <div class="container">
+    <div class="footer-inner">
+      <div>
+        <div class="footer-brand">re<span>sync</span></div>
+        <div class="footer-tagline">File synchronization, done right.</div>
+      </div>
+      <div class="footer-links">
+        <div class="footer-col">
+          <h4>Project</h4>
+          <ul>
+            <li><a href="https://github.com/vedLinuxian/resync-rs" target="_blank" rel="noopener">Source Code</a></li>
+            <li><a href="https://github.com/vedLinuxian/resync-rs/releases" target="_blank" rel="noopener">Releases</a></li>
+            <li><a href="https://github.com/vedLinuxian/resync-rs/blob/main/CHANGELOG.md" target="_blank" rel="noopener">Changelog</a></li>
+            <li><a href="https://github.com/vedLinuxian/resync-rs/blob/main/LICENSE" target="_blank" rel="noopener">License</a></li>
+          </ul>
+        </div>
+        <div class="footer-col">
+          <h4>Community</h4>
+          <ul>
+            <li><a href="https://github.com/vedLinuxian/resync-rs/issues" target="_blank" rel="noopener">Issues</a></li>
+            <li><a href="https://github.com/vedLinuxian/resync-rs/blob/main/CONTRIBUTING.md" target="_blank" rel="noopener">Contributing</a></li>
+            <li><a href="https://github.com/vedLinuxian/resync-rs/blob/main/CODE_OF_CONDUCT.md" target="_blank" rel="noopener">Code of Conduct</a></li>
+            <li><a href="https://github.com/vedLinuxian/resync-rs/blob/main/SECURITY.md" target="_blank" rel="noopener">Security</a></li>
+          </ul>
+        </div>
+      </div>
     </div>
+    <div class="footer-bottom">
+      resync-rs -- MIT License -- Built with Rust
+    </div>
+  </div>
 </footer>
 
+<!-- ═══════════════════════════ SCRIPTS ═══════════════════════════ -->
+
 <script>
-function switchTab(event, tabId) {
-    document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
-    document.querySelectorAll('.tab-content').forEach(tc => tc.classList.remove('active'));
-    event.target.classList.add('active');
-    document.getElementById(tabId).classList.add('active');
-}
+(function() {
+  'use strict';
+
+  /* ── Mobile nav toggle ── */
+  var navToggle = document.getElementById('navToggle');
+  var navLinks = document.getElementById('navLinks');
+  if (navToggle && navLinks) {
+    navToggle.addEventListener('click', function() {
+      navLinks.classList.toggle('open');
+    });
+    navLinks.querySelectorAll('a').forEach(function(link) {
+      link.addEventListener('click', function() {
+        navLinks.classList.remove('open');
+      });
+    });
+  }
+
+  /* ── Copy install command ── */
+  window.copyInstall = function() {
+    var text = 'cargo install resync-rs';
+    var btn = document.getElementById('copyBtn');
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(function() {
+        btn.textContent = 'Copied';
+        setTimeout(function() { btn.textContent = 'Copy'; }, 2000);
+      });
+    } else {
+      var ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.left = '-9999px';
+      document.body.appendChild(ta);
+      ta.select();
+      try { document.execCommand('copy'); } catch(e) { /* noop */ }
+      document.body.removeChild(ta);
+      btn.textContent = 'Copied';
+      setTimeout(function() { btn.textContent = 'Copy'; }, 2000);
+    }
+  };
+
+  /* ── Intersection Observer: fade-in + benchmark bar animation ── */
+  var observer = new IntersectionObserver(function(entries) {
+    entries.forEach(function(entry) {
+      if (!entry.isIntersecting) return;
+      entry.target.classList.add('visible');
+
+      var bars = entry.target.querySelectorAll('.bar-fill');
+      if (bars.length > 0) {
+        setTimeout(function() {
+          bars.forEach(function(bar) {
+            var w = bar.getAttribute('data-width');
+            if (w) {
+              bar.style.width = Math.max(parseFloat(w), 3) + '%';
+            }
+          });
+        }, 150);
+      }
+      observer.unobserve(entry.target);
+    });
+  }, {
+    threshold: 0.15,
+    rootMargin: '0px 0px -40px 0px'
+  });
+
+  document.querySelectorAll('.fade-in').forEach(function(el) {
+    observer.observe(el);
+  });
+
+  /* ── Smooth scroll for anchor links ── */
+  document.querySelectorAll('a[href^="#"]').forEach(function(a) {
+    a.addEventListener('click', function(e) {
+      var href = a.getAttribute('href');
+      if (href === '#') return;
+      var target = document.querySelector(href);
+      if (target) {
+        e.preventDefault();
+        var navH = 56;
+        var top = target.getBoundingClientRect().top + window.pageYOffset - navH - 20;
+        window.scrollTo({ top: top, behavior: 'smooth' });
+      }
+    });
+  });
+
+  /* ── Nav solidify on scroll ── */
+  var navEl = document.querySelector('nav');
+  window.addEventListener('scroll', function() {
+    if (window.pageYOffset > 100) {
+      navEl.style.borderBottomColor = 'rgba(31, 41, 55, 0.8)';
+      navEl.style.background = 'rgba(10, 14, 23, 0.95)';
+    } else {
+      navEl.style.borderBottomColor = '';
+      navEl.style.background = '';
+    }
+  }, { passive: true });
+
+})();
 </script>
 
 </body>

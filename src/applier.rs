@@ -56,6 +56,17 @@ impl std::ops::Deref for FileData {
     }
 }
 
+// ─── Sparse zero detection ───────────────────────────────────────────────────
+
+/// Check if a byte slice is entirely zeros.
+/// Handles arbitrary lengths (not just multiples of block_size).
+fn is_all_zeros(data: &[u8], block_size: usize) -> bool {
+    if data.len() < block_size {
+        return false; // Too small to bother with sparse optimization
+    }
+    data.iter().all(|&b| b == 0)
+}
+
 // ─── Unique temp file naming ─────────────────────────────────────────────────
 
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -173,6 +184,8 @@ pub struct Applier {
     pub dry_run: bool,
     pub fsync: bool,
     pub inplace: bool,
+    pub sparse: bool,
+    pub append: bool,
 }
 
 impl Applier {
@@ -193,7 +206,19 @@ impl Applier {
             dry_run,
             fsync,
             inplace,
+            sparse: false,
+            append: false,
         }
+    }
+
+    /// Enable sparse file handling — seek over zero blocks instead of writing them.
+    pub fn set_sparse(&mut self, enabled: bool) {
+        self.sparse = enabled;
+    }
+
+    /// Enable append mode — only write data beyond the current dst file length.
+    pub fn set_append(&mut self, enabled: bool) {
+        self.append = enabled;
     }
 
     /// Apply `delta` to produce `dst_path`, reading new data from `src_path`.
@@ -228,9 +253,13 @@ impl Applier {
             return self.write_empty_file(dst_path, src_entry);
         }
 
+        // --append mode: only write bytes beyond current dst length
+        if self.append && dst_path.exists() {
+            return self.apply_append(src_path, dst_path, src_entry);
+        }
+
         // Read source data (zero-copy via mmap for large files)
         let src_data = self.read_file_data(src_path)?;
-
         // Read destination data if it exists (for Copy ops)
         let dst_data: Option<FileData> = if dst_path.exists() {
             Some(self.read_file_data(dst_path)?)
@@ -278,6 +307,8 @@ impl Applier {
     }
 
     /// Write the delta ops to a temp file, return bytes written from source.
+    ///
+    /// PERF: 256 KB BufWriter, sparse-aware zero skipping, pre-allocated output.
     fn write_delta(
         &self,
         tmp_path: &Path,
@@ -295,10 +326,22 @@ impl Applier {
                 source: e,
             })?;
 
-        // PERF FIX: 256 KB buffer instead of default 8 KB — reduces
+        // PERF: Pre-allocate the destination file to avoid fragmentation
+        #[cfg(target_os = "linux")]
+        {
+            use std::os::unix::io::AsRawFd;
+            unsafe {
+                libc::fallocate(tmp_file.as_raw_fd(), 0, 0, delta.final_size as i64);
+            }
+        }
+
+        // PERF: 256 KB buffer instead of default 8 KB — reduces
         // write(2) syscall count by 32x for large files.
         let mut writer = BufWriter::with_capacity(256 * 1024, &tmp_file);
         let mut bytes_written: u64 = 0;
+
+        // Zero block size for sparse file detection (4096 = common page size)
+        const ZERO_BLOCK_SIZE: usize = 4096;
 
         for op in &delta.ops {
             match op {
@@ -308,7 +351,6 @@ impl Applier {
                     let start = *src_offset as usize;
                     let end = start + len;
 
-                    // BUG FIX #9: Bounds check — panic-safe with clear error
                     if end > dst.len() {
                         return Err(ResyncError::DeltaApplyFailed(format!(
                             "Copy op references offset {}..{} but dst is only {} bytes \
@@ -319,8 +361,23 @@ impl Applier {
                         )));
                     }
 
+                    let chunk = &dst[start..end];
+
+                    // Sparse optimization: if the block is all zeros, seek forward
+                    if self.sparse && is_all_zeros(chunk, ZERO_BLOCK_SIZE) {
+                        writer.flush().map_err(|e| ResyncError::Io {
+                            path: tmp_path.display().to_string(),
+                            source: e,
+                        })?;
+                        writer.seek(SeekFrom::Current(chunk.len() as i64)).map_err(|e| ResyncError::Io {
+                            path: tmp_path.display().to_string(),
+                            source: e,
+                        })?;
+                        continue;
+                    }
+
                     writer
-                        .write_all(&dst[start..end])
+                        .write_all(chunk)
                         .map_err(|e| ResyncError::Io {
                             path: tmp_path.display().to_string(),
                             source: e,
@@ -330,7 +387,6 @@ impl Applier {
                     let start = *src_offset as usize;
                     let end = start + len;
 
-                    // BUG FIX #9: Bounds check
                     if end > src_data.len() {
                         return Err(ResyncError::DeltaApplyFailed(format!(
                             "Write op references offset {}..{} but src is only {} bytes \
@@ -341,8 +397,24 @@ impl Applier {
                         )));
                     }
 
+                    let chunk = &src_data[start..end];
+
+                    // Sparse optimization
+                    if self.sparse && is_all_zeros(chunk, ZERO_BLOCK_SIZE) {
+                        writer.flush().map_err(|e| ResyncError::Io {
+                            path: tmp_path.display().to_string(),
+                            source: e,
+                        })?;
+                        writer.seek(SeekFrom::Current(chunk.len() as i64)).map_err(|e| ResyncError::Io {
+                            path: tmp_path.display().to_string(),
+                            source: e,
+                        })?;
+                        bytes_written += *len as u64;
+                        continue;
+                    }
+
                     writer
-                        .write_all(&src_data[start..end])
+                        .write_all(chunk)
                         .map_err(|e| ResyncError::Io {
                             path: tmp_path.display().to_string(),
                             source: e,
@@ -370,18 +442,69 @@ impl Applier {
         Ok(bytes_written)
     }
 
+    /// Append mode: only write source bytes beyond current destination length.
+    /// If src is shorter than dst, dst is left unchanged.
+    fn apply_append(
+        &self,
+        src_path: &Path,
+        dst_path: &Path,
+        src_entry: &FileEntry,
+    ) -> Result<u64> {
+        let dst_len = fs::metadata(dst_path)
+            .map(|m| m.len())
+            .unwrap_or(0);
+
+        if src_entry.size <= dst_len {
+            // Source is not longer than destination — nothing to append
+            return Ok(0);
+        }
+
+        let src_data = self.read_file_data(src_path)?;
+        let append_start = dst_len as usize;
+        let append_data = &src_data[append_start..];
+
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .append(true)
+            .open(dst_path)
+            .map_err(|e| ResyncError::Io {
+                path: dst_path.display().to_string(),
+                source: e,
+            })?;
+
+        file.write_all(append_data).map_err(|e| ResyncError::Io {
+            path: dst_path.display().to_string(),
+            source: e,
+        })?;
+
+        if self.fsync {
+            file.sync_data().map_err(|e| ResyncError::Io {
+                path: dst_path.display().to_string(),
+                source: e,
+            })?;
+        }
+
+        self.apply_metadata(dst_path, src_entry)?;
+        Ok(append_data.len() as u64)
+    }
+
     /// Write delta directly to destination file (--inplace mode).
     /// Faster but not crash-safe: a power failure mid-write leaves a corrupt file.
+    ///
+    /// Uses direct file I/O (no BufWriter) to avoid buffer coherence issues
+    /// when interleaving seeks and writes.
     fn write_delta_inplace(
         &self,
         dst_path: &Path,
         src_data: &[u8],
-        _dst_data: Option<&[u8]>,
+        dst_data: Option<&[u8]>,
         delta: &FileDelta,
         src_entry: &FileEntry,
     ) -> Result<u64> {
-        let file = OpenOptions::new()
+        let mut file = OpenOptions::new()
             .write(true)
+            .read(true)
             .create(true)
             .open(dst_path)
             .map_err(|e| ResyncError::Io {
@@ -389,23 +512,57 @@ impl Applier {
                 source: e,
             })?;
 
-        // Set the final file size first
+        // Pre-allocate the final file size with fallocate for zero fragmentation
+        #[cfg(target_os = "linux")]
+        {
+            use std::os::unix::io::AsRawFd;
+            unsafe {
+                libc::fallocate(file.as_raw_fd(), 0, 0, delta.final_size as i64);
+            }
+        }
         file.set_len(delta.final_size).map_err(|e| ResyncError::Io {
             path: dst_path.display().to_string(),
             source: e,
         })?;
 
-        let mut writer = BufWriter::with_capacity(256 * 1024, &file);
+        // Use direct file I/O (not BufWriter) to avoid buffer coherence
+        // issues when interleaving seeks and writes.
         let mut bytes_written: u64 = 0;
         let mut current_offset: u64 = 0;
 
+        // Zero block for sparse file detection
+        const ZERO_BLOCK_SIZE: usize = 4096;
+
         for op in &delta.ops {
             match op {
-                DeltaOp::Copy { src_offset: _, len } => {
-                    // For inplace, Copy ops reference data already in dst at the right offset
-                    // We skip over them (they're already in place)
+                DeltaOp::Copy { src_offset, len } => {
+                    // In inplace mode, if the copy source offset matches our
+                    // current output offset, the data is already in place.
+                    // Otherwise we need to read from dst and write to the
+                    // correct position.
+                    if *src_offset != current_offset {
+                        if let Some(dst) = dst_data {
+                            let start = *src_offset as usize;
+                            let end = start + len;
+                            if end <= dst.len() {
+                                let chunk = &dst[start..end];
+                                // Sparse: skip zero blocks
+                                if self.sparse && is_all_zeros(chunk, ZERO_BLOCK_SIZE) {
+                                    // Already zeros after fallocate/set_len
+                                } else {
+                                    file.seek(SeekFrom::Start(current_offset)).map_err(|e| ResyncError::Io {
+                                        path: dst_path.display().to_string(),
+                                        source: e,
+                                    })?;
+                                    file.write_all(chunk).map_err(|e| ResyncError::Io {
+                                        path: dst_path.display().to_string(),
+                                        source: e,
+                                    })?;
+                                }
+                            }
+                        }
+                    }
                     current_offset += *len as u64;
-                    writer.seek(SeekFrom::Start(current_offset)).ok();
                 }
                 DeltaOp::Write { src_offset, len } => {
                     let start = *src_offset as usize;
@@ -416,25 +573,25 @@ impl Applier {
                             start, end, src_data.len()
                         )));
                     }
-                    writer.seek(SeekFrom::Start(current_offset)).map_err(|e| ResyncError::Io {
-                        path: dst_path.display().to_string(),
-                        source: e,
-                    })?;
-                    writer.write_all(&src_data[start..end]).map_err(|e| ResyncError::Io {
-                        path: dst_path.display().to_string(),
-                        source: e,
-                    })?;
+                    let chunk = &src_data[start..end];
+                    // Sparse: skip zero blocks
+                    if self.sparse && is_all_zeros(chunk, ZERO_BLOCK_SIZE) {
+                        // Leave as hole
+                    } else {
+                        file.seek(SeekFrom::Start(current_offset)).map_err(|e| ResyncError::Io {
+                            path: dst_path.display().to_string(),
+                            source: e,
+                        })?;
+                        file.write_all(chunk).map_err(|e| ResyncError::Io {
+                            path: dst_path.display().to_string(),
+                            source: e,
+                        })?;
+                    }
                     bytes_written += *len as u64;
                     current_offset += *len as u64;
                 }
             }
         }
-
-        writer.flush().map_err(|e| ResyncError::Io {
-            path: dst_path.display().to_string(),
-            source: e,
-        })?;
-        drop(writer);
 
         if self.fsync {
             file.sync_data().map_err(|e| ResyncError::Io {
@@ -504,9 +661,11 @@ impl Applier {
 
     /// Fully copy a file atomically (shortcut when no destination exists yet).
     ///
-    /// PERF FIX: Uses copy_file_range(2) on Linux for zero-copy kernel-space
+    /// PERF: Uses copy_file_range(2) on Linux for zero-copy kernel-space
     /// file duplication. Data never enters userspace. Falls back to std::fs::copy
     /// on other platforms or unsupported filesystem combinations.
+    ///
+    /// PERF: Pre-allocates destination with fallocate(2) to avoid fragmentation.
     pub fn copy_new(&self, src_path: &Path, dst_path: &Path, src_entry: &FileEntry) -> Result<u64> {
         if self.dry_run {
             return Ok(src_entry.size);
@@ -529,6 +688,7 @@ impl Applier {
 
         // Atomic copy via temp file + zero-copy on Linux
         let tmp_path = temp_path_for(dst_path);
+
         match copy_file_range_all(src_path, &tmp_path) {
             Ok(_) => {
                 if self.fsync {
@@ -582,8 +742,6 @@ impl Applier {
     fn apply_metadata(&self, dst_path: &Path, src: &FileEntry) -> Result<()> {
         #[cfg(unix)]
         {
-            use std::os::unix::fs::MetadataExt;
-
             if self.preserve_perms {
                 let perms = fs::Permissions::from_mode(src.mode & 0o7777);
                 fs::set_permissions(dst_path, perms).map_err(|e| ResyncError::Io {
@@ -593,64 +751,50 @@ impl Applier {
             }
 
             if self.preserve_times {
-                if let Ok(file) = fs::OpenOptions::new().write(true).open(dst_path) {
-                    if let Err(e) = file.set_modified(src.modified) {
-                        warn!("failed to set mtime on {}: {e}", dst_path.display());
+                // PERF FIX: Use filetime::set_file_mtime equivalent without
+                // opening the file — just call utimensat via libc.
+                use std::ffi::CString;
+                if let Ok(c_path) = CString::new(dst_path.to_string_lossy().as_bytes()) {
+                    let mtime = src.modified;
+                    let dur = mtime.duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
+                    let ts = libc::timespec {
+                        tv_sec: dur.as_secs() as i64,
+                        tv_nsec: dur.subsec_nanos() as i64,
+                    };
+                    let times = [
+                        libc::timespec { tv_sec: 0, tv_nsec: libc::UTIME_OMIT },  // atime: don't change
+                        ts,  // mtime
+                    ];
+                    let ret = unsafe {
+                        libc::utimensat(libc::AT_FDCWD, c_path.as_ptr(), times.as_ptr(), 0)
+                    };
+                    if ret != 0 {
+                        warn!("failed to set mtime on {}: {}", dst_path.display(), std::io::Error::last_os_error());
                     }
                 }
             }
 
             // Owner/group preservation via libc::chown
+            // PERF: Uses uid/gid cached in FileEntry — ZERO extra stat() calls.
             if self.preserve_owner || self.preserve_group {
-                if let Ok(dst_meta) = fs::metadata(dst_path) {
-                    let src_uid = if self.preserve_owner {
-                        // We need the original uid from the source file
-                        fs::metadata(&src.abs_path)
-                            .ok()
-                            .map(|m| m.uid())
-                            .unwrap_or(u32::MAX) // -1 means "don't change"
-                    } else {
-                        u32::MAX
-                    };
+                let new_uid = if self.preserve_owner { src.uid } else { u32::MAX };
+                let new_gid = if self.preserve_group { src.gid } else { u32::MAX };
 
-                    let src_gid = if self.preserve_group {
-                        fs::metadata(&src.abs_path)
-                            .ok()
-                            .map(|m| m.gid())
-                            .unwrap_or(u32::MAX)
-                    } else {
-                        u32::MAX
-                    };
-
-                    let dst_uid = dst_meta.uid();
-                    let dst_gid = dst_meta.gid();
-
-                    let new_uid = if self.preserve_owner && src_uid != u32::MAX {
-                        src_uid
-                    } else {
-                        dst_uid
-                    };
-                    let new_gid = if self.preserve_group && src_gid != u32::MAX {
-                        src_gid
-                    } else {
-                        dst_gid
-                    };
-
-                    if new_uid != dst_uid || new_gid != dst_gid {
-                        use std::ffi::CString;
-                        if let Ok(c_path) = CString::new(dst_path.to_string_lossy().as_bytes()) {
-                            let ret = unsafe {
-                                libc::chown(c_path.as_ptr(), new_uid, new_gid)
-                            };
-                            if ret != 0 {
-                                warn!(
-                                    "chown failed for {} (uid={}, gid={}): {}",
-                                    dst_path.display(),
-                                    new_uid,
-                                    new_gid,
-                                    std::io::Error::last_os_error()
-                                );
-                            }
+                // Only call chown if we actually want to change something
+                if new_uid != u32::MAX || new_gid != u32::MAX {
+                    use std::ffi::CString;
+                    if let Ok(c_path) = CString::new(dst_path.to_string_lossy().as_bytes()) {
+                        let ret = unsafe {
+                            libc::chown(c_path.as_ptr(), new_uid, new_gid)
+                        };
+                        if ret != 0 {
+                            warn!(
+                                "chown failed for {} (uid={}, gid={}): {}",
+                                dst_path.display(),
+                                new_uid,
+                                new_gid,
+                                std::io::Error::last_os_error()
+                            );
                         }
                     }
                 }
