@@ -29,8 +29,8 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
 use rayon::prelude::*;
@@ -238,7 +238,12 @@ impl SyncEngine {
         // --trust-mtime: if ALL directory mtimes match, assume nothing changed.
         // This is safe for deployments/CI (artifacts are replaced, not edited)
         // but NOT safe when users may edit files in-place.
-        if self.opts.trust_mtime && !self.opts.no_manifest && !self.opts.delete && !self.opts.dry_run && !self.opts.checksum {
+        if self.opts.trust_mtime
+            && !self.opts.no_manifest
+            && !self.opts.delete
+            && !self.opts.dry_run
+            && !self.opts.checksum
+        {
             use crate::manifest::ManifestToc;
             let toc_dest = if let Some(ref dir) = self.opts.manifest_dir {
                 dir.clone()
@@ -246,7 +251,10 @@ impl SyncEngine {
                 self.opts.dest.clone()
             };
             if let Some(toc) = ManifestToc::load(&toc_dest) {
-                let src_canon = self.opts.source.canonicalize()
+                let src_canon = self
+                    .opts
+                    .source
+                    .canonicalize()
                     .unwrap_or_else(|_| self.opts.source.clone());
                 if (toc.source_path == src_canon || toc.source_path == self.opts.source)
                     && toc.source_unchanged(&src_canon)
@@ -273,7 +281,11 @@ impl SyncEngine {
 
         let loaded_manifest = if !self.opts.no_manifest {
             Manifest::load(&manifest_path).and_then(|m| {
-                let src_canon = self.opts.source.canonicalize().unwrap_or_else(|_| self.opts.source.clone());
+                let src_canon = self
+                    .opts
+                    .source
+                    .canonicalize()
+                    .unwrap_or_else(|_| self.opts.source.clone());
                 if m.source_path == src_canon || m.source_path == self.opts.source {
                     Some(m)
                 } else {
@@ -337,11 +349,8 @@ impl SyncEngine {
                     .into_iter()
                     .map(|f| (f.rel_path.clone(), f))
                     .collect();
-                let dir_set: HashSet<PathBuf> = dst_result
-                    .dirs
-                    .into_iter()
-                    .map(|d| d.rel_path)
-                    .collect();
+                let dir_set: HashSet<PathBuf> =
+                    dst_result.dirs.into_iter().map(|d| d.rel_path).collect();
                 (map, dir_set)
             } else {
                 (HashMap::new(), HashSet::new())
@@ -362,7 +371,11 @@ impl SyncEngine {
             src_result.files.len(),
             bytesize::ByteSize::b(src_result.total_bytes),
             dst_map.len(),
-            if used_manifest { " (from manifest)" } else { "" },
+            if used_manifest {
+                " (from manifest)"
+            } else {
+                ""
+            },
         );
 
         // ── 3b. Apply filter engine + size filters + --files-from ──────────
@@ -504,9 +517,9 @@ impl SyncEngine {
 
         #[derive(Debug)]
         enum Action {
-            CopyNew,   // File doesn't exist on dest
-            CopyFull,  // --whole-file forced full copy
-            Delta,     // Existing file needs delta sync
+            CopyNew,  // File doesn't exist on dest
+            CopyFull, // --whole-file forced full copy
+            Delta,    // Existing file needs delta sync
         }
 
         let mut work_list: Vec<(usize, Action)> = Vec::new();
@@ -531,71 +544,72 @@ impl SyncEngine {
                 skipped_count
             );
         } else {
-        for (idx, src_entry) in src_result.files.iter().enumerate() {
-            let dst_entry = dst_map.get(&src_entry.rel_path);
-            let dst_exists = dst_entry.is_some();
+            for (idx, src_entry) in src_result.files.iter().enumerate() {
+                let dst_entry = dst_map.get(&src_entry.rel_path);
+                let dst_exists = dst_entry.is_some();
 
-            // --existing: skip files that don't exist on dest
-            if self.opts.existing && !dst_exists {
-                skipped_bytes += src_entry.size;
-                skipped_count += 1;
-                continue;
-            }
-
-            // --ignore-existing: skip files that exist on dest
-            if self.opts.ignore_existing && dst_exists {
-                skipped_bytes += src_entry.size;
-                skipped_count += 1;
-                continue;
-            }
-
-            // --update: skip if dest is newer
-            if self.opts.update {
-                if let Some(de) = dst_entry {
-                    if de.modified > src_entry.modified {
-                        skipped_bytes += src_entry.size;
-                        skipped_count += 1;
-                        continue;
-                    }
+                // --existing: skip files that don't exist on dest
+                if self.opts.existing && !dst_exists {
+                    skipped_bytes += src_entry.size;
+                    skipped_count += 1;
+                    continue;
                 }
-            }
 
-            if !dst_exists {
-                work_list.push((idx, Action::CopyNew));
-            } else if self.opts.whole_file {
-                work_list.push((idx, Action::CopyFull));
-            } else {
-                // mtime+size fast-path
-                if !self.opts.checksum {
+                // --ignore-existing: skip files that exist on dest
+                if self.opts.ignore_existing && dst_exists {
+                    skipped_bytes += src_entry.size;
+                    skipped_count += 1;
+                    continue;
+                }
+
+                // --update: skip if dest is newer
+                if self.opts.update {
                     if let Some(de) = dst_entry {
-                        let size_match = de.size == src_entry.size;
-                        let mtime_match = if self.opts.size_only {
-                            true
-                        } else if self.opts.modify_window > 0 {
-                            let diff = if src_entry.modified > de.modified {
-                                src_entry.modified
-                                    .duration_since(de.modified)
-                                    .unwrap_or_default()
-                            } else {
-                                de.modified
-                                    .duration_since(src_entry.modified)
-                                    .unwrap_or_default()
-                            };
-                            diff.as_secs() <= self.opts.modify_window as u64
-                        } else {
-                            src_entry.modified == de.modified
-                        };
-
-                        if size_match && mtime_match {
+                        if de.modified > src_entry.modified {
                             skipped_bytes += src_entry.size;
                             skipped_count += 1;
                             continue;
                         }
                     }
                 }
-                work_list.push((idx, Action::Delta));
+
+                if !dst_exists {
+                    work_list.push((idx, Action::CopyNew));
+                } else if self.opts.whole_file {
+                    work_list.push((idx, Action::CopyFull));
+                } else {
+                    // mtime+size fast-path
+                    if !self.opts.checksum {
+                        if let Some(de) = dst_entry {
+                            let size_match = de.size == src_entry.size;
+                            let mtime_match = if self.opts.size_only {
+                                true
+                            } else if self.opts.modify_window > 0 {
+                                let diff = if src_entry.modified > de.modified {
+                                    src_entry
+                                        .modified
+                                        .duration_since(de.modified)
+                                        .unwrap_or_default()
+                                } else {
+                                    de.modified
+                                        .duration_since(src_entry.modified)
+                                        .unwrap_or_default()
+                                };
+                                diff.as_secs() <= self.opts.modify_window as u64
+                            } else {
+                                src_entry.modified == de.modified
+                            };
+
+                            if size_match && mtime_match {
+                                skipped_bytes += src_entry.size;
+                                skipped_count += 1;
+                                continue;
+                            }
+                        }
+                    }
+                    work_list.push((idx, Action::Delta));
+                }
             }
-        }
         } // end of else (non-fast-path)
 
         // Report skipped files in bulk (no per-file atomic operations)
@@ -692,7 +706,10 @@ impl SyncEngine {
                                     if matches!(action, Action::CopyNew) {
                                         reporter.counters.files_new.fetch_add(1, Ordering::Relaxed);
                                     } else {
-                                        reporter.counters.files_updated.fetch_add(1, Ordering::Relaxed);
+                                        reporter
+                                            .counters
+                                            .files_updated
+                                            .fetch_add(1, Ordering::Relaxed);
                                     }
                                     reporter.on_file_done(
                                         src_entry.size,
@@ -708,8 +725,16 @@ impl SyncEngine {
                                     }
 
                                     // Post-transfer checksum verification
-                                    if self.opts.checksum_verify && !src_entry.is_symlink && src_entry.size > 0 {
-                                        Self::verify_checksum(&src_entry.abs_path, &dst_path, &src_entry.rel_path, &error_count);
+                                    if self.opts.checksum_verify
+                                        && !src_entry.is_symlink
+                                        && src_entry.size > 0
+                                    {
+                                        Self::verify_checksum(
+                                            &src_entry.abs_path,
+                                            &dst_path,
+                                            &src_entry.rel_path,
+                                            &error_count,
+                                        );
                                     }
                                 }
                                 Err(e) => {
@@ -812,12 +837,23 @@ impl SyncEngine {
                                     }
 
                                     // Post-transfer checksum verification
-                                    if self.opts.checksum_verify && !src_entry.is_symlink && src_entry.size > 0 {
-                                        Self::verify_checksum(&src_entry.abs_path, &dst_path, &src_entry.rel_path, &error_count);
+                                    if self.opts.checksum_verify
+                                        && !src_entry.is_symlink
+                                        && src_entry.size > 0
+                                    {
+                                        Self::verify_checksum(
+                                            &src_entry.abs_path,
+                                            &dst_path,
+                                            &src_entry.rel_path,
+                                            &error_count,
+                                        );
                                     }
                                 }
                                 Err(e) => {
-                                    error!("apply failed for {}: {e}", src_entry.rel_path.display());
+                                    error!(
+                                        "apply failed for {}: {e}",
+                                        src_entry.rel_path.display()
+                                    );
                                     error_count.fetch_add(1, Ordering::Relaxed);
                                     reporter.on_file_error(src_entry.size);
                                 }
@@ -885,9 +921,7 @@ impl SyncEngine {
                     .filter(|d| !src_dirs.contains(d.as_path()))
                     .map(|d| self.opts.dest.join(d))
                     .collect();
-                orphan_dirs.sort_by(|a, b| {
-                    b.components().count().cmp(&a.components().count())
-                });
+                orphan_dirs.sort_by(|a, b| b.components().count().cmp(&a.components().count()));
                 for dir in orphan_dirs {
                     if self.opts.force {
                         fs::remove_dir_all(&dir).ok();
@@ -907,10 +941,17 @@ impl SyncEngine {
         // PERF: Skip saving if nothing changed and manifest already exists
         // (saves ~80ms at 100K files).
         let anything_changed = !work_list.is_empty()
-            || (self.opts.delete && dst_map.iter().any(|(rp, _)| !src_paths.contains(rp.as_path())));
+            || (self.opts.delete
+                && dst_map
+                    .iter()
+                    .any(|(rp, _)| !src_paths.contains(rp.as_path())));
         let manifest_exists = loaded_manifest.is_some();
         if !self.opts.no_manifest && !self.opts.dry_run && (anything_changed || !manifest_exists) {
-            let src_canon = self.opts.source.canonicalize().unwrap_or_else(|_| self.opts.source.clone());
+            let src_canon = self
+                .opts
+                .source
+                .canonicalize()
+                .unwrap_or_else(|_| self.opts.source.clone());
             let manifest = Manifest::from_scan_result(&src_result, src_canon);
             if let Err(e) = manifest.save(&manifest_path) {
                 warn!("Failed to save manifest cache: {e}");
@@ -955,12 +996,7 @@ impl SyncEngine {
     }
 
     /// Post-transfer checksum verification: hash both files and compare.
-    fn verify_checksum(
-        src_path: &Path,
-        dst_path: &Path,
-        rel_path: &Path,
-        error_count: &AtomicU64,
-    ) {
+    fn verify_checksum(src_path: &Path, dst_path: &Path, rel_path: &Path, error_count: &AtomicU64) {
         let src_hash = Self::blake3_file(src_path);
         let dst_hash = Self::blake3_file(dst_path);
         match (src_hash, dst_hash) {
@@ -1001,7 +1037,7 @@ impl SyncEngine {
         // Walk bottom-up by collecting all dirs, sorting by depth descending
         let mut dirs: Vec<PathBuf> = Vec::new();
         Self::collect_dirs(root, &mut dirs);
-        dirs.sort_by(|a, b| b.components().count().cmp(&a.components().count()));
+        dirs.sort_by_key(|b| std::cmp::Reverse(b.components().count()));
 
         for dir in dirs {
             if dir == root {

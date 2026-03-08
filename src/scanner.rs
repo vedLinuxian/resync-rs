@@ -86,9 +86,7 @@ impl Scanner {
         #[cfg(unix)]
         let root_dev = {
             use std::os::unix::fs::MetadataExt;
-            std::fs::metadata(&root)
-                .map(|m| m.dev())
-                .unwrap_or(0)
+            std::fs::metadata(&root).map(|m| m.dev()).unwrap_or(0)
         };
         #[cfg(not(unix))]
         let root_dev = 0u64;
@@ -285,151 +283,156 @@ impl Scanner {
             let level_results: Vec<(ScanResult, Vec<(PathBuf, PathBuf)>)> = current_level
                 .par_iter()
                 .map(|(dir_abs, dir_rel)| {
-                let mut local_result = ScanResult::default();
-                let mut local_next: Vec<(PathBuf, PathBuf)> = Vec::new();
+                    let mut local_result = ScanResult::default();
+                    let mut local_next: Vec<(PathBuf, PathBuf)> = Vec::new();
 
-                let entries = match std::fs::read_dir(dir_abs) {
-                    Ok(e) => e,
-                    Err(err) => {
-                        warn!("cannot read dir {}: {err}", dir_abs.display());
-                        local_result.errors += 1;
-                        return (local_result, local_next);
-                    }
-                };
-
-                for entry in entries {
-                    let entry = match entry {
+                    let entries = match std::fs::read_dir(dir_abs) {
                         Ok(e) => e,
                         Err(err) => {
-                            warn!("scan error in {}: {err}", dir_abs.display());
+                            warn!("cannot read dir {}: {err}", dir_abs.display());
                             local_result.errors += 1;
-                            continue;
+                            return (local_result, local_next);
                         }
                     };
 
-                    let abs = entry.path();
-                    let name = entry.file_name();
-                    let rel = if dir_rel.as_os_str().is_empty() {
-                        PathBuf::from(&name)
-                    } else {
-                        dir_rel.join(&name)
-                    };
+                    for entry in entries {
+                        let entry = match entry {
+                            Ok(e) => e,
+                            Err(err) => {
+                                warn!("scan error in {}: {err}", dir_abs.display());
+                                local_result.errors += 1;
+                                continue;
+                            }
+                        };
 
-                    let ft = match entry.file_type() {
-                        Ok(ft) => ft,
-                        Err(e) => {
-                            warn!("file_type failed for {}: {e}", abs.display());
-                            local_result.errors += 1;
-                            continue;
-                        }
-                    };
+                        let abs = entry.path();
+                        let name = entry.file_name();
+                        let rel = if dir_rel.as_os_str().is_empty() {
+                            PathBuf::from(&name)
+                        } else {
+                            dir_rel.join(&name)
+                        };
 
-                    let is_symlink = ft.is_symlink();
+                        let ft = match entry.file_type() {
+                            Ok(ft) => ft,
+                            Err(e) => {
+                                warn!("file_type failed for {}: {e}", abs.display());
+                                local_result.errors += 1;
+                                continue;
+                            }
+                        };
 
-                    if is_symlink {
-                        if self.preserve_links {
-                            let meta = match std::fs::symlink_metadata(&abs) {
+                        let is_symlink = ft.is_symlink();
+
+                        if is_symlink {
+                            if self.preserve_links {
+                                let meta = match std::fs::symlink_metadata(&abs) {
+                                    Ok(m) => m,
+                                    Err(e) => {
+                                        warn!("lstat failed for {}: {e}", abs.display());
+                                        local_result.errors += 1;
+                                        continue;
+                                    }
+                                };
+                                let target = std::fs::read_link(&abs).ok();
+                                local_result.files.push(FileEntry {
+                                    abs_path: abs,
+                                    rel_path: rel,
+                                    size: 0,
+                                    modified: meta.modified().unwrap_or(SystemTime::UNIX_EPOCH),
+                                    mode: meta.mode(),
+                                    is_symlink: true,
+                                    symlink_target: target,
+                                    ino: meta.ino(),
+                                    dev: meta.dev(),
+                                    uid: meta.uid(),
+                                    gid: meta.gid(),
+                                });
+                            } else {
+                                match std::fs::metadata(&abs) {
+                                    Ok(meta) if meta.is_file() => {
+                                        local_result.total_bytes += meta.len();
+                                        local_result.files.push(FileEntry {
+                                            abs_path: abs,
+                                            rel_path: rel,
+                                            size: meta.len(),
+                                            modified: meta
+                                                .modified()
+                                                .unwrap_or(SystemTime::UNIX_EPOCH),
+                                            mode: meta.mode(),
+                                            is_symlink: false,
+                                            symlink_target: None,
+                                            ino: meta.ino(),
+                                            dev: meta.dev(),
+                                            uid: meta.uid(),
+                                            gid: meta.gid(),
+                                        });
+                                    }
+                                    Ok(meta) if meta.is_dir() => {
+                                        local_result.dirs.push(DirEntry {
+                                            abs_path: abs.clone(),
+                                            rel_path: rel.clone(),
+                                            mode: meta.mode(),
+                                            modified: meta
+                                                .modified()
+                                                .unwrap_or(SystemTime::UNIX_EPOCH),
+                                        });
+                                        local_next.push((abs, rel));
+                                    }
+                                    _ => {
+                                        warn!("skipping dangling symlink: {}", abs.display());
+                                    }
+                                }
+                            }
+                        } else if ft.is_dir() {
+                            let meta = match entry.metadata() {
                                 Ok(m) => m,
                                 Err(e) => {
-                                    warn!("lstat failed for {}: {e}", abs.display());
+                                    warn!("stat failed for {}: {e}", abs.display());
                                     local_result.errors += 1;
                                     continue;
                                 }
                             };
-                            let target = std::fs::read_link(&abs).ok();
+                            // --one-file-system: skip directories on different devices
+                            if self.one_file_system && meta.dev() != self.root_dev {
+                                continue;
+                            }
+                            local_result.dirs.push(DirEntry {
+                                abs_path: abs.clone(),
+                                rel_path: rel.clone(),
+                                mode: meta.mode(),
+                                modified: meta.modified().unwrap_or(SystemTime::UNIX_EPOCH),
+                            });
+                            local_next.push((abs, rel));
+                        } else if ft.is_file() {
+                            let meta = match entry.metadata() {
+                                Ok(m) => m,
+                                Err(e) => {
+                                    warn!("stat failed for {}: {e}", abs.display());
+                                    local_result.errors += 1;
+                                    continue;
+                                }
+                            };
+                            local_result.total_bytes += meta.len();
                             local_result.files.push(FileEntry {
                                 abs_path: abs,
                                 rel_path: rel,
-                                size: 0,
+                                size: meta.len(),
                                 modified: meta.modified().unwrap_or(SystemTime::UNIX_EPOCH),
                                 mode: meta.mode(),
-                                is_symlink: true,
-                                symlink_target: target,
+                                is_symlink: false,
+                                symlink_target: None,
                                 ino: meta.ino(),
                                 dev: meta.dev(),
                                 uid: meta.uid(),
                                 gid: meta.gid(),
                             });
-                        } else {
-                            match std::fs::metadata(&abs) {
-                                Ok(meta) if meta.is_file() => {
-                                    local_result.total_bytes += meta.len();
-                                    local_result.files.push(FileEntry {
-                                        abs_path: abs,
-                                        rel_path: rel,
-                                        size: meta.len(),
-                                        modified: meta.modified().unwrap_or(SystemTime::UNIX_EPOCH),
-                                        mode: meta.mode(),
-                                        is_symlink: false,
-                                        symlink_target: None,
-                                        ino: meta.ino(),
-                                        dev: meta.dev(),
-                                        uid: meta.uid(),
-                                        gid: meta.gid(),
-                                    });
-                                }
-                                Ok(meta) if meta.is_dir() => {
-                                    local_result.dirs.push(DirEntry {
-                                        abs_path: abs.clone(),
-                                        rel_path: rel.clone(),
-                                        mode: meta.mode(),
-                                        modified: meta.modified().unwrap_or(SystemTime::UNIX_EPOCH),
-                                    });
-                                    local_next.push((abs, rel));
-                                }
-                                _ => {
-                                    warn!("skipping dangling symlink: {}", abs.display());
-                                }
-                            }
                         }
-                    } else if ft.is_dir() {
-                        let meta = match entry.metadata() {
-                            Ok(m) => m,
-                            Err(e) => {
-                                warn!("stat failed for {}: {e}", abs.display());
-                                local_result.errors += 1;
-                                continue;
-                            }
-                        };
-                        // --one-file-system: skip directories on different devices
-                        if self.one_file_system && meta.dev() != self.root_dev {
-                            continue;
-                        }
-                        local_result.dirs.push(DirEntry {
-                            abs_path: abs.clone(),
-                            rel_path: rel.clone(),
-                            mode: meta.mode(),
-                            modified: meta.modified().unwrap_or(SystemTime::UNIX_EPOCH),
-                        });
-                        local_next.push((abs, rel));
-                    } else if ft.is_file() {
-                        let meta = match entry.metadata() {
-                            Ok(m) => m,
-                            Err(e) => {
-                                warn!("stat failed for {}: {e}", abs.display());
-                                local_result.errors += 1;
-                                continue;
-                            }
-                        };
-                        local_result.total_bytes += meta.len();
-                        local_result.files.push(FileEntry {
-                            abs_path: abs,
-                            rel_path: rel,
-                            size: meta.len(),
-                            modified: meta.modified().unwrap_or(SystemTime::UNIX_EPOCH),
-                            mode: meta.mode(),
-                            is_symlink: false,
-                            symlink_target: None,
-                            ino: meta.ino(),
-                            dev: meta.dev(),
-                            uid: meta.uid(),
-                            gid: meta.gid(),
-                        });
                     }
-                }
 
-                (local_result, local_next)
-            }).collect();
+                    (local_result, local_next)
+                })
+                .collect();
 
             // Merge all per-directory results into final_result (no locks needed)
             let mut next = Vec::new();
@@ -490,7 +493,7 @@ impl Scanner {
 
             // Check if this directory's mtime matches the cache
             let cached_mtime = cache.dir_mtimes.get(&dir_rel);
-            let mtime_matches = cached_mtime.map_or(false, |&cm| cm == dir_mtime_ns);
+            let mtime_matches = cached_mtime.is_some_and(|&cm| cm == dir_mtime_ns);
 
             if mtime_matches {
                 // Directory structure unchanged (no files added/removed/renamed).

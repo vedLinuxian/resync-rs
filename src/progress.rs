@@ -4,8 +4,8 @@
 //!   • Files bar — N / M files processed
 //!   • Bytes bar — bytes transferred with throughput rate
 
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
 use bytesize::ByteSize;
@@ -119,8 +119,12 @@ impl ProgressReporter {
 
     /// Bulk skip — avoids per-file atomic contention for large skip batches.
     pub fn on_bulk_skipped(&self, count: u64, bytes: u64) {
-        self.counters.files_skipped.fetch_add(count, Ordering::Relaxed);
-        self.counters.bytes_skipped.fetch_add(bytes, Ordering::Relaxed);
+        self.counters
+            .files_skipped
+            .fetch_add(count, Ordering::Relaxed);
+        self.counters
+            .bytes_skipped
+            .fetch_add(bytes, Ordering::Relaxed);
         self.files_bar.inc(count);
         self.bytes_bar.inc(bytes);
     }

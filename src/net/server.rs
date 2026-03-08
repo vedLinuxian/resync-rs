@@ -16,13 +16,13 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
-use futures::stream::StreamExt;
 use futures::SinkExt;
+use futures::stream::StreamExt;
 use tokio::net::TcpListener;
 use tokio_util::codec::Framed;
 use tracing::{error, info, warn};
 
-use crate::net::tls::{accept_stream, MaybeTlsStream, TlsConfig};
+use crate::net::tls::{MaybeTlsStream, TlsConfig, accept_stream};
 
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
@@ -134,14 +134,23 @@ async fn handle_connection(stream: MaybeTlsStream, peer: SocketAddr) -> anyhow::
         // Create the directory first so canonicalize works.
         fs::create_dir_all(&dest_path)?;
         let canonical = dest_path.canonicalize().map_err(|e| {
-            anyhow::anyhow!("cannot canonicalize dest_path '{}': {e}", dest_path.display())
+            anyhow::anyhow!(
+                "cannot canonicalize dest_path '{}': {e}",
+                dest_path.display()
+            )
         })?;
         // Reject absolute paths that look suspicious (e.g., /etc, /root, /var)
         // Allow only paths under /tmp, /home, /data, /mnt, /srv, /opt, or current dir
         let p = canonical.to_string_lossy();
-        if p.starts_with("/etc") || p.starts_with("/root") || p.starts_with("/proc")
-            || p.starts_with("/sys") || p.starts_with("/dev") || p.starts_with("/boot")
-            || p.starts_with("/sbin") || p.starts_with("/bin") || p.starts_with("/usr")
+        if p.starts_with("/etc")
+            || p.starts_with("/root")
+            || p.starts_with("/proc")
+            || p.starts_with("/sys")
+            || p.starts_with("/dev")
+            || p.starts_with("/boot")
+            || p.starts_with("/sbin")
+            || p.starts_with("/bin")
+            || p.starts_with("/usr")
         {
             anyhow::bail!("refusing to sync to system directory: {p}");
         }
@@ -167,8 +176,14 @@ async fn handle_connection(stream: MaybeTlsStream, peer: SocketAddr) -> anyhow::
                 // SECURITY: Reject paths with ".." to prevent path traversal attacks.
                 // A malicious client could send rel_path = "../../etc/shadow" to write
                 // outside the destination directory.
-                if rel_path.components().any(|c| c == std::path::Component::ParentDir) {
-                    anyhow::bail!("path traversal detected in rel_path: {}", rel_path.display());
+                if rel_path
+                    .components()
+                    .any(|c| c == std::path::Component::ParentDir)
+                {
+                    anyhow::bail!(
+                        "path traversal detected in rel_path: {}",
+                        rel_path.display()
+                    );
                 }
                 if rel_path.is_absolute() {
                     anyhow::bail!("absolute rel_path rejected: {}", rel_path.display());

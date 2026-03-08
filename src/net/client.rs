@@ -15,8 +15,8 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::time::Instant;
 
-use futures::stream::StreamExt;
 use futures::SinkExt;
+use futures::stream::StreamExt;
 use tokio::net::TcpStream;
 use tokio_util::codec::Framed;
 use tracing::{debug, info};
@@ -24,7 +24,7 @@ use tracing::{debug, info};
 use crate::delta::DeltaOp;
 use crate::hasher::{FileManifest, Hash256, Hasher};
 use crate::net::protocol::*;
-use crate::net::tls::{connect_stream, MaybeTlsStream, TlsConfig};
+use crate::net::tls::{MaybeTlsStream, TlsConfig, connect_stream};
 use crate::scanner::{FileEntry, Scanner};
 
 // ─── Client options ──────────────────────────────────────────────────────────
@@ -330,8 +330,14 @@ impl Client {
                     ..
                 } => {
                     // SECURITY: Reject path traversal in rel_path from server
-                    if rel_path.components().any(|c| c == std::path::Component::ParentDir) {
-                        anyhow::bail!("path traversal detected in rel_path: {}", rel_path.display());
+                    if rel_path
+                        .components()
+                        .any(|c| c == std::path::Component::ParentDir)
+                    {
+                        anyhow::bail!(
+                            "path traversal detected in rel_path: {}",
+                            rel_path.display()
+                        );
                     }
                     if rel_path.is_absolute() {
                         anyhow::bail!("absolute rel_path rejected: {}", rel_path.display());
@@ -387,7 +393,10 @@ impl Client {
                                 tv_nsec: mtime_nanos as i64,
                             };
                             let times = [
-                                libc::timespec { tv_sec: 0, tv_nsec: libc::UTIME_OMIT },
+                                libc::timespec {
+                                    tv_sec: 0,
+                                    tv_nsec: libc::UTIME_OMIT,
+                                },
                                 ts,
                             ];
                             unsafe {

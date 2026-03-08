@@ -34,7 +34,7 @@ dd if=/dev/urandom of="$SRC/sub/deep/big.bin" bs=4096 count=20 2>/dev/null
 touch "$SRC/empty.dat"
 
 $RESYNC -r "$SRC/" "$DST/" --stats
-diff -rq "$SRC" "$DST" && pass "Fresh sync: all files match" || fail "Fresh sync: files differ"
+diff -rq "$SRC" "$DST" --exclude '.resync-manifest' --exclude '.resync-toc' && pass "Fresh sync: all files match" || fail "Fresh sync: files differ"
 
 # Verify empty file
 [[ -f "$DST/empty.dat" && ! -s "$DST/empty.dat" ]] && pass "Empty file synced" || fail "Empty file missing or non-empty"
@@ -50,12 +50,12 @@ cp "$SRC/data.bin" "$DST/data.bin"
 printf '\xff' | dd of="$SRC/data.bin" bs=1 seek=400000 conv=notrunc 2>/dev/null
 
 $RESYNC -r "$SRC/" "$DST/" --stats 2>&1 | tee "$TMPDIR/t2_out.txt"
-diff -rq "$SRC" "$DST" && pass "Delta sync: files match after partial change" || fail "Delta sync: files differ"
+diff -rq "$SRC" "$DST" --exclude '.resync-manifest' --exclude '.resync-toc' && pass "Delta sync: files match after partial change" || fail "Delta sync: files differ"
 
 # ─── T3: Idempotent re-sync — nothing transferred ────────────────────────────
 echo -e "\n${CYAN}TEST 3: Idempotent re-sync (no changes)${NC}"
 $RESYNC -r "$SRC/" "$DST/" --stats 2>&1 | tee "$TMPDIR/t3_out.txt"
-diff -rq "$SRC" "$DST" && pass "Idempotent re-sync: files still match" || fail "Idempotent re-sync: files differ"
+diff -rq "$SRC" "$DST" --exclude '.resync-manifest' --exclude '.resync-toc' && pass "Idempotent re-sync: files still match" || fail "Idempotent re-sync: files differ"
 
 # ─── T4: --delete removes extra files from dest ──────────────────────────────
 echo -e "\n${CYAN}TEST 4: --delete removes orphan files${NC}"
@@ -88,7 +88,7 @@ mkdir -p "$SRC" "$DST"
 dd if=/dev/urandom of="$SRC/large.bin" bs=1M count=10 2>/dev/null
 
 $RESYNC -r "$SRC/" "$DST/" --chunk-size 8192 --stats
-diff -rq "$SRC" "$DST" && pass "Large file: matches" || fail "Large file: differs"
+diff -rq "$SRC" "$DST" --exclude '.resync-manifest' --exclude '.resync-toc' && pass "Large file: matches" || fail "Large file: differs"
 
 # ─── T7: Non-recursive mode ──────────────────────────────────────────────────
 echo -e "\n${CYAN}TEST 7: Non-recursive sync${NC}"
@@ -179,7 +179,7 @@ RESYNC_COLD_MS=$(( (RESYNC_END - RESYNC_START) / 1000000 ))
 echo -e "${BOLD}${RESYNC_COLD_MS} ms${NC}"
 
 # Verify correctness
-diff -rq "$BSRC" "$BDST_RESYNC" > /dev/null && echo -e "  ${GREEN}✓ Output matches source${NC}" || echo -e "  ${RED}✗ Output differs!${NC}"
+diff -rq "$BSRC" "$BDST_RESYNC" --exclude '.resync-manifest' --exclude '.resync-toc' > /dev/null && echo -e "  ${GREEN}✓ Output matches source${NC}" || echo -e "  ${RED}✗ Output differs!${NC}"
 
 # ─── Warm sync (nothing changed) ─────────────────────────────────────────────
 echo -e "\n${YELLOW}── Warm sync (no changes — idempotent) ──${NC}"
@@ -226,7 +226,7 @@ RESYNC_DELTA_MS=$(( (RESYNC_END - RESYNC_START) / 1000000 ))
 echo -e "${BOLD}${RESYNC_DELTA_MS} ms${NC}"
 
 # Verify correctness after delta
-diff -rq "$BSRC" "$BDST_RESYNC" > /dev/null && echo -e "  ${GREEN}✓ Output matches source${NC}" || echo -e "  ${RED}✗ Output differs!${NC}"
+diff -rq "$BSRC" "$BDST_RESYNC" --exclude '.resync-manifest' --exclude '.resync-toc' > /dev/null && echo -e "  ${GREEN}✓ Output matches source${NC}" || echo -e "  ${RED}✗ Output differs!${NC}"
 
 # ─── Summary ──────────────────────────────────────────────────────────────────
 echo ""

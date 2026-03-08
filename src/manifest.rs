@@ -77,9 +77,8 @@ impl ManifestToc {
     /// Save TOC to a file alongside the manifest.
     pub fn save(&self, dest: &Path) -> Result<()> {
         let path = dest.join(TOC_FILENAME);
-        let payload = bincode::serialize(self).map_err(|e| {
-            ResyncError::Other(anyhow::anyhow!("TOC serialize failed: {e}"))
-        })?;
+        let payload = bincode::serialize(self)
+            .map_err(|e| ResyncError::Other(anyhow::anyhow!("TOC serialize failed: {e}")))?;
         let mut data = Vec::with_capacity(12 + payload.len());
         data.extend_from_slice(&MANIFEST_MAGIC);
         data.extend_from_slice(&MANIFEST_VERSION.to_le_bytes());
@@ -94,7 +93,11 @@ impl ManifestToc {
             path: path.display().to_string(),
             source: e,
         })?;
-        info!("Saved TOC: {} dirs ({} bytes)", self.dir_mtimes.len(), data.len());
+        info!(
+            "Saved TOC: {} dirs ({} bytes)",
+            self.dir_mtimes.len(),
+            data.len()
+        );
         Ok(())
     }
 
@@ -105,10 +108,16 @@ impl ManifestToc {
             Ok(d) => d,
             Err(_) => return None,
         };
-        if data.len() < 12 { return None; }
-        if &data[0..8] != &MANIFEST_MAGIC { return None; }
+        if data.len() < 12 {
+            return None;
+        }
+        if data[0..8] != MANIFEST_MAGIC {
+            return None;
+        }
         let version = u32::from_le_bytes([data[8], data[9], data[10], data[11]]);
-        if version != MANIFEST_VERSION { return None; }
+        if version != MANIFEST_VERSION {
+            return None;
+        }
         bincode::deserialize::<ManifestToc>(&data[12..]).ok()
     }
 
@@ -373,9 +382,8 @@ impl Manifest {
     ///
     /// Format: [8-byte magic] [4-byte version LE] [zstd-compressed bincode payload]
     pub fn save(&self, path: &Path) -> Result<()> {
-        let payload = bincode::serialize(self).map_err(|e| {
-            ResyncError::Other(anyhow::anyhow!("manifest serialize failed: {e}"))
-        })?;
+        let payload = bincode::serialize(self)
+            .map_err(|e| ResyncError::Other(anyhow::anyhow!("manifest serialize failed: {e}")))?;
 
         // Compress with zstd level 3 (fast, good ratio for structured data)
         let compressed = zstd::encode_all(payload.as_slice(), 3).map_err(|e| {
@@ -432,7 +440,7 @@ impl Manifest {
             warn!("Manifest file too small, ignoring");
             return None;
         }
-        if &data[0..8] != &MANIFEST_MAGIC {
+        if data[0..8] != MANIFEST_MAGIC {
             warn!("Manifest magic mismatch, ignoring");
             return None;
         }
@@ -491,8 +499,7 @@ mod tests {
                     abs_path: PathBuf::from("/src/a.txt"),
                     rel_path: PathBuf::from("a.txt"),
                     size: 100,
-                    modified: SystemTime::UNIX_EPOCH
-                        + std::time::Duration::from_secs(1700000000),
+                    modified: SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1700000000),
                     mode: 0o644,
                     is_symlink: false,
                     symlink_target: None,
@@ -505,8 +512,7 @@ mod tests {
                     abs_path: PathBuf::from("/src/sub/b.txt"),
                     rel_path: PathBuf::from("sub/b.txt"),
                     size: 200,
-                    modified: SystemTime::UNIX_EPOCH
-                        + std::time::Duration::from_secs(1700000001),
+                    modified: SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1700000001),
                     mode: 0o755,
                     is_symlink: false,
                     symlink_target: None,
@@ -600,9 +606,6 @@ mod tests {
         let loaded = Manifest::load(&path).unwrap();
         let entry = loaded.files.get(Path::new("link")).unwrap();
         assert!(entry.is_symlink);
-        assert_eq!(
-            entry.symlink_target,
-            Some(PathBuf::from("target.txt"))
-        );
+        assert_eq!(entry.symlink_target, Some(PathBuf::from("target.txt")));
     }
 }

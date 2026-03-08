@@ -164,7 +164,12 @@ pub struct Cli {
 
     // ───── bandwidth limiting ────────────────────────────────────────────────
     /// Limit I/O bandwidth to RATE kilobytes per second (0 = unlimited).
-    #[arg(long = "bwlimit", value_name = "RATE", default_value_t = 0, global = true)]
+    #[arg(
+        long = "bwlimit",
+        value_name = "RATE",
+        default_value_t = 0,
+        global = true
+    )]
     pub bwlimit: u64,
 
     // ───── checksum mode ─────────────────────────────────────────────────────
@@ -177,7 +182,12 @@ pub struct Cli {
     pub size_only: bool,
 
     /// Timestamp comparison window in seconds (for FAT32 etc.)
-    #[arg(long = "modify-window", value_name = "SECONDS", default_value_t = 0, global = true)]
+    #[arg(
+        long = "modify-window",
+        value_name = "SECONDS",
+        default_value_t = 0,
+        global = true
+    )]
     pub modify_window: u32,
 
     // ───── backup mode ───────────────────────────────────────────────────────
@@ -190,7 +200,12 @@ pub struct Cli {
     pub backup_dir: Option<PathBuf>,
 
     /// Change the backup suffix (default: ~). Used with --backup.
-    #[arg(long = "suffix", value_name = "SUFFIX", default_value = "~", global = true)]
+    #[arg(
+        long = "suffix",
+        value_name = "SUFFIX",
+        default_value = "~",
+        global = true
+    )]
     pub suffix: String,
 
     // ───── incremental backup ────────────────────────────────────────────────
@@ -241,7 +256,12 @@ pub struct Cli {
 
     // ───── I/O timeout ───────────────────────────────────────────────────────
     /// I/O timeout in seconds (0 = no timeout)
-    #[arg(long = "timeout", value_name = "SECONDS", default_value_t = 0, global = true)]
+    #[arg(
+        long = "timeout",
+        value_name = "SECONDS",
+        default_value_t = 0,
+        global = true
+    )]
     pub timeout: u64,
 
     // ───── resync-specific performance knobs ─────────────────────────────────
@@ -261,11 +281,21 @@ pub struct Cli {
     pub threads: usize,
 
     /// Log level: error | warn | info | debug | trace
-    #[arg(long = "log-level", default_value = "warn", value_name = "LEVEL", global = true)]
+    #[arg(
+        long = "log-level",
+        default_value = "warn",
+        value_name = "LEVEL",
+        global = true
+    )]
     pub log_level: String,
 
     /// Zstd compression level (1-22, default: 3)
-    #[arg(long = "compress-level", default_value_t = 3, value_name = "LEVEL", global = true)]
+    #[arg(
+        long = "compress-level",
+        default_value_t = 3,
+        value_name = "LEVEL",
+        global = true
+    )]
     pub compress_level: i32,
 
     /// Force fsync after each file write (default: off for speed).

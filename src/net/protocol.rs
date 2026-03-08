@@ -286,9 +286,11 @@ impl Decoder for MsgCodec {
                         format!("zstd init error: {e}"),
                     )
                 })?;
-                let mut output = Vec::with_capacity(std::cmp::min(payload.len() * 4, 4 * 1024 * 1024));
+                let mut output =
+                    Vec::with_capacity(std::cmp::min(payload.len() * 4, 4 * 1024 * 1024));
                 use std::io::Read;
-                let bytes_read = decoder.take(MAX_DECOMPRESSED as u64)
+                let bytes_read = decoder
+                    .take(MAX_DECOMPRESSED as u64)
                     .read_to_end(&mut output)
                     .map_err(|e| {
                         std::io::Error::new(

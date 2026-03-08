@@ -481,19 +481,19 @@ impl Applier {
                             path: tmp_path.display().to_string(),
                             source: e,
                         })?;
-                        writer.seek(SeekFrom::Current(chunk.len() as i64)).map_err(|e| ResyncError::Io {
-                            path: tmp_path.display().to_string(),
-                            source: e,
-                        })?;
+                        writer
+                            .seek(SeekFrom::Current(chunk.len() as i64))
+                            .map_err(|e| ResyncError::Io {
+                                path: tmp_path.display().to_string(),
+                                source: e,
+                            })?;
                         continue;
                     }
 
-                    writer
-                        .write_all(chunk)
-                        .map_err(|e| ResyncError::Io {
-                            path: tmp_path.display().to_string(),
-                            source: e,
-                        })?;
+                    writer.write_all(chunk).map_err(|e| ResyncError::Io {
+                        path: tmp_path.display().to_string(),
+                        source: e,
+                    })?;
                 }
                 DeltaOp::Write { src_offset, len } => {
                     let start = *src_offset as usize;
@@ -517,20 +517,20 @@ impl Applier {
                             path: tmp_path.display().to_string(),
                             source: e,
                         })?;
-                        writer.seek(SeekFrom::Current(chunk.len() as i64)).map_err(|e| ResyncError::Io {
-                            path: tmp_path.display().to_string(),
-                            source: e,
-                        })?;
+                        writer
+                            .seek(SeekFrom::Current(chunk.len() as i64))
+                            .map_err(|e| ResyncError::Io {
+                                path: tmp_path.display().to_string(),
+                                source: e,
+                            })?;
                         bytes_written += *len as u64;
                         continue;
                     }
 
-                    writer
-                        .write_all(chunk)
-                        .map_err(|e| ResyncError::Io {
-                            path: tmp_path.display().to_string(),
-                            source: e,
-                        })?;
+                    writer.write_all(chunk).map_err(|e| ResyncError::Io {
+                        path: tmp_path.display().to_string(),
+                        source: e,
+                    })?;
                     bytes_written += *len as u64;
                 }
             }
@@ -556,15 +556,8 @@ impl Applier {
 
     /// Append mode: only write source bytes beyond current destination length.
     /// If src is shorter than dst, dst is left unchanged.
-    fn apply_append(
-        &self,
-        src_path: &Path,
-        dst_path: &Path,
-        src_entry: &FileEntry,
-    ) -> Result<u64> {
-        let dst_len = fs::metadata(dst_path)
-            .map(|m| m.len())
-            .unwrap_or(0);
+    fn apply_append(&self, src_path: &Path, dst_path: &Path, src_entry: &FileEntry) -> Result<u64> {
+        let dst_len = fs::metadata(dst_path).map(|m| m.len()).unwrap_or(0);
 
         if src_entry.size <= dst_len {
             // Source is not longer than destination — nothing to append
@@ -576,7 +569,6 @@ impl Applier {
         let append_data = &src_data[append_start..];
 
         let mut file = OpenOptions::new()
-            .write(true)
             .create(true)
             .append(true)
             .open(dst_path)
@@ -618,6 +610,7 @@ impl Applier {
             .write(true)
             .read(true)
             .create(true)
+            .truncate(false)
             .open(dst_path)
             .map_err(|e| ResyncError::Io {
                 path: dst_path.display().to_string(),
@@ -632,10 +625,11 @@ impl Applier {
                 libc::fallocate(file.as_raw_fd(), 0, 0, delta.final_size as i64);
             }
         }
-        file.set_len(delta.final_size).map_err(|e| ResyncError::Io {
-            path: dst_path.display().to_string(),
-            source: e,
-        })?;
+        file.set_len(delta.final_size)
+            .map_err(|e| ResyncError::Io {
+                path: dst_path.display().to_string(),
+                source: e,
+            })?;
 
         // Use direct file I/O (not BufWriter) to avoid buffer coherence
         // issues when interleaving seeks and writes.
@@ -662,9 +656,11 @@ impl Applier {
                                 if self.sparse && is_all_zeros(chunk, ZERO_BLOCK_SIZE) {
                                     // Already zeros after fallocate/set_len
                                 } else {
-                                    file.seek(SeekFrom::Start(current_offset)).map_err(|e| ResyncError::Io {
-                                        path: dst_path.display().to_string(),
-                                        source: e,
+                                    file.seek(SeekFrom::Start(current_offset)).map_err(|e| {
+                                        ResyncError::Io {
+                                            path: dst_path.display().to_string(),
+                                            source: e,
+                                        }
                                     })?;
                                     file.write_all(chunk).map_err(|e| ResyncError::Io {
                                         path: dst_path.display().to_string(),
@@ -682,7 +678,9 @@ impl Applier {
                     if end > src_data.len() {
                         return Err(ResyncError::DeltaApplyFailed(format!(
                             "Write op references offset {}..{} but src is only {} bytes",
-                            start, end, src_data.len()
+                            start,
+                            end,
+                            src_data.len()
                         )));
                     }
                     let chunk = &src_data[start..end];
@@ -690,9 +688,11 @@ impl Applier {
                     if self.sparse && is_all_zeros(chunk, ZERO_BLOCK_SIZE) {
                         // Leave as hole
                     } else {
-                        file.seek(SeekFrom::Start(current_offset)).map_err(|e| ResyncError::Io {
-                            path: dst_path.display().to_string(),
-                            source: e,
+                        file.seek(SeekFrom::Start(current_offset)).map_err(|e| {
+                            ResyncError::Io {
+                                path: dst_path.display().to_string(),
+                                source: e,
+                            }
                         })?;
                         file.write_all(chunk).map_err(|e| ResyncError::Io {
                             path: dst_path.display().to_string(),
@@ -863,14 +863,8 @@ impl Applier {
         // FICLONE ioctl number
         const FICLONE: libc::c_ulong = 0x40049409;
 
-        let ret = unsafe {
-            libc::ioctl(dst_file.as_raw_fd(), FICLONE, src_file.as_raw_fd())
-        };
-        if ret == 0 {
-            Ok(())
-        } else {
-            Err(())
-        }
+        let ret = unsafe { libc::ioctl(dst_file.as_raw_fd(), FICLONE, src_file.as_raw_fd()) };
+        if ret == 0 { Ok(()) } else { Err(()) }
     }
 
     #[cfg(not(target_os = "linux"))]
@@ -933,20 +927,29 @@ impl Applier {
                 use std::ffi::CString;
                 if let Ok(c_path) = CString::new(dst_path.to_string_lossy().as_bytes()) {
                     let mtime = src.modified;
-                    let dur = mtime.duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
+                    let dur = mtime
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default();
                     let ts = libc::timespec {
                         tv_sec: dur.as_secs() as i64,
                         tv_nsec: dur.subsec_nanos() as i64,
                     };
                     let times = [
-                        libc::timespec { tv_sec: 0, tv_nsec: libc::UTIME_OMIT },  // atime: don't change
-                        ts,  // mtime
+                        libc::timespec {
+                            tv_sec: 0,
+                            tv_nsec: libc::UTIME_OMIT,
+                        }, // atime: don't change
+                        ts, // mtime
                     ];
                     let ret = unsafe {
                         libc::utimensat(libc::AT_FDCWD, c_path.as_ptr(), times.as_ptr(), 0)
                     };
                     if ret != 0 {
-                        warn!("failed to set mtime on {}: {}", dst_path.display(), std::io::Error::last_os_error());
+                        warn!(
+                            "failed to set mtime on {}: {}",
+                            dst_path.display(),
+                            std::io::Error::last_os_error()
+                        );
                     }
                 }
             }
@@ -954,7 +957,11 @@ impl Applier {
             // Owner/group preservation via libc::chown
             // PERF: Uses uid/gid cached in FileEntry — ZERO extra stat() calls.
             // Also supports --chown override.
-            if self.preserve_owner || self.preserve_group || self.chown_uid.is_some() || self.chown_gid.is_some() {
+            if self.preserve_owner
+                || self.preserve_group
+                || self.chown_uid.is_some()
+                || self.chown_gid.is_some()
+            {
                 let new_uid = if let Some(uid) = self.chown_uid {
                     uid
                 } else if self.preserve_owner {
@@ -974,9 +981,7 @@ impl Applier {
                 if new_uid != u32::MAX || new_gid != u32::MAX {
                     use std::ffi::CString;
                     if let Ok(c_path) = CString::new(dst_path.to_string_lossy().as_bytes()) {
-                        let ret = unsafe {
-                            libc::chown(c_path.as_ptr(), new_uid, new_gid)
-                        };
+                        let ret = unsafe { libc::chown(c_path.as_ptr(), new_uid, new_gid) };
                         if ret != 0 {
                             warn!(
                                 "chown failed for {} (uid={}, gid={}): {}",
@@ -999,7 +1004,8 @@ impl Applier {
                                 if let Err(e) = xattr::set(dst_path, &attr, &value) {
                                     warn!(
                                         "failed to set xattr {:?} on {}: {e}",
-                                        attr, dst_path.display()
+                                        attr,
+                                        dst_path.display()
                                     );
                                 }
                             }
@@ -1007,7 +1013,8 @@ impl Applier {
                             Err(e) => {
                                 warn!(
                                     "failed to read xattr {:?} from {}: {e}",
-                                    attr, src.abs_path.display()
+                                    attr,
+                                    src.abs_path.display()
                                 );
                             }
                         }

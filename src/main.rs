@@ -7,9 +7,9 @@
 
 use anyhow::Context;
 use clap::Parser;
-use tracing_subscriber::{fmt, prelude::*, EnvFilter};
+use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
-use resync_rs::cli::{parse_remote, Cli, Command};
+use resync_rs::cli::{Cli, Command, parse_remote};
 use resync_rs::net::client::{Client, ClientOptions};
 use resync_rs::net::server::Server;
 use resync_rs::net::tls::TlsConfig;
