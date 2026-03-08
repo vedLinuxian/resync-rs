@@ -29,7 +29,7 @@ use tracing::info;
 // ─── Configuration ───────────────────────────────────────────────────────────
 
 /// TLS configuration parsed from CLI flags.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct TlsConfig {
     /// Whether TLS is enabled (`--tls`).
     pub enabled: bool,
@@ -40,17 +40,6 @@ pub struct TlsConfig {
     /// Verify the server's certificate against system CAs (`--tls-verify`).
     /// When false (default), self-signed certificates are accepted.
     pub verify: bool,
-}
-
-impl Default for TlsConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            cert_path: None,
-            key_path: None,
-            verify: false,
-        }
-    }
 }
 
 impl TlsConfig {
@@ -111,8 +100,7 @@ impl TlsConfig {
 
         fs::write(&cert_path, &cert_pem)
             .with_context(|| format!("write {}", cert_path.display()))?;
-        fs::write(&key_path, &key_pem)
-            .with_context(|| format!("write {}", key_path.display()))?;
+        fs::write(&key_path, &key_pem).with_context(|| format!("write {}", key_path.display()))?;
 
         // Restrict private key permissions on Unix
         #[cfg(unix)]
@@ -315,7 +303,11 @@ fn load_certs(path: &Path) -> Result<Vec<CertificateDer<'static>>> {
         .collect::<std::result::Result<Vec<_>, _>>()
         .with_context(|| format!("parse certs from {}", path.display()))?;
 
-    anyhow::ensure!(!certs.is_empty(), "no certificates found in {}", path.display());
+    anyhow::ensure!(
+        !certs.is_empty(),
+        "no certificates found in {}",
+        path.display()
+    );
     Ok(certs)
 }
 
@@ -402,8 +394,6 @@ impl rustls::client::danger::ServerCertVerifier for NoServerVerification {
     }
 
     fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
-        self.0
-            .signature_verification_algorithms
-            .supported_schemes()
+        self.0.signature_verification_algorithms.supported_schemes()
     }
 }

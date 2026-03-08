@@ -34,7 +34,6 @@ pub struct Cli {
     pub dest: Option<PathBuf>,
 
     // ───── rsync-compatible shorthand flags ──────────────────────────────────
-
     /// Archive mode: preserves permissions, symlinks, timestamps (-rlptgoD)
     #[arg(short = 'a', long = "archive", global = true)]
     pub archive: bool,
@@ -80,7 +79,6 @@ pub struct Cli {
     pub recursive: bool,
 
     // ───── exclude / include filters ─────────────────────────────────────────
-
     /// Exclude files matching PATTERN (glob). May be repeated.
     /// Examples: --exclude '*.log' --exclude 'tmp/' --exclude '.git/'
     #[arg(long = "exclude", value_name = "PATTERN", action = clap::ArgAction::Append, global = true)]
@@ -96,21 +94,23 @@ pub struct Cli {
     pub exclude_from: Vec<PathBuf>,
 
     // ───── bandwidth limiting ────────────────────────────────────────────────
-
     /// Limit I/O bandwidth to RATE kilobytes per second (0 = unlimited).
     /// Same semantics as rsync --bwlimit.
-    #[arg(long = "bwlimit", value_name = "RATE", default_value_t = 0, global = true)]
+    #[arg(
+        long = "bwlimit",
+        value_name = "RATE",
+        default_value_t = 0,
+        global = true
+    )]
     pub bwlimit: u64,
 
     // ───── checksum mode ─────────────────────────────────────────────────────
-
     /// Skip the mtime+size fast path — always hash files to detect changes.
     /// Equivalent to rsync -c.
     #[arg(short = 'c', long = "checksum", global = true)]
     pub checksum: bool,
 
     // ───── backup mode ───────────────────────────────────────────────────────
-
     /// Make backups: rename replaced files with a suffix before overwriting
     #[arg(long = "backup", global = true)]
     pub backup: bool,
@@ -121,24 +121,26 @@ pub struct Cli {
     pub backup_dir: Option<PathBuf>,
 
     /// Change the backup suffix (default: ~). Used with --backup.
-    #[arg(long = "suffix", value_name = "SUFFIX", default_value = "~", global = true)]
+    #[arg(
+        long = "suffix",
+        value_name = "SUFFIX",
+        default_value = "~",
+        global = true
+    )]
     pub suffix: String,
 
     // ───── itemize changes ───────────────────────────────────────────────────
-
     /// Output a change-summary for all updates (like rsync -i).
     /// Format: >f.st...... file.txt
     #[arg(short = 'i', long = "itemize-changes", global = true)]
     pub itemize_changes: bool,
 
     // ───── log file ──────────────────────────────────────────────────────────
-
     /// Write a detailed transfer log to FILE
     #[arg(long = "log-file", value_name = "FILE", global = true)]
     pub log_file: Option<PathBuf>,
 
     // ───── resync-specific performance knobs ─────────────────────────────────
-
     /// Chunk size in bytes for BLAKE3 delta hashing (min: 512, default: 8192)
     #[arg(
         long = "chunk-size",
@@ -160,7 +162,12 @@ pub struct Cli {
     pub threads: usize,
 
     /// Log level: error | warn | info | debug | trace
-    #[arg(long = "log-level", default_value = "warn", value_name = "LEVEL", global = true)]
+    #[arg(
+        long = "log-level",
+        default_value = "warn",
+        value_name = "LEVEL",
+        global = true
+    )]
     pub log_level: String,
 
     /// Print final benchmark summary (throughput, CPU utilisation, time)
@@ -264,9 +271,9 @@ pub fn parse_remote(remote: &str) -> anyhow::Result<(std::net::SocketAddr, PathB
         3 => {
             // HOST:PORT:PATH
             let host = parts[0];
-            let port: u16 = parts[1].parse().map_err(|_| {
-                anyhow::anyhow!("invalid port in remote spec: {}", parts[1])
-            })?;
+            let port: u16 = parts[1]
+                .parse()
+                .map_err(|_| anyhow::anyhow!("invalid port in remote spec: {}", parts[1]))?;
             let path = PathBuf::from(parts[2]);
             let addr: std::net::SocketAddr = format!("{host}:{port}").parse()?;
             Ok((addr, path))
@@ -278,9 +285,8 @@ pub fn parse_remote(remote: &str) -> anyhow::Result<(std::net::SocketAddr, PathB
             let addr: std::net::SocketAddr = format!("{host}:2377").parse()?;
             Ok((addr, path))
         }
-        _ => anyhow::bail!(
-            "invalid remote format: use HOST:PATH or HOST:PORT:PATH\n  got: {remote}"
-        ),
+        _ => {
+            anyhow::bail!("invalid remote format: use HOST:PATH or HOST:PORT:PATH\n  got: {remote}")
+        }
     }
 }
-

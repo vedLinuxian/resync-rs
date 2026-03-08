@@ -22,7 +22,7 @@ use memmap2::Mmap;
 use tracing::warn;
 
 use crate::delta::{DeltaOp, FileDelta};
-use crate::error::{ResyncError, Result};
+use crate::error::{Result, ResyncError};
 use crate::scanner::FileEntry;
 
 // ─── Zero-copy file data wrapper ─────────────────────────────────────────────
@@ -63,10 +63,7 @@ static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 fn temp_path_for(dst_path: &Path) -> PathBuf {
     let counter = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
     let pid = std::process::id();
-    let file_name = dst_path
-        .file_name()
-        .unwrap_or_default()
-        .to_string_lossy();
+    let file_name = dst_path.file_name().unwrap_or_default().to_string_lossy();
     let tmp_name = format!(".{file_name}.resync.{pid}.{counter}.tmp");
     dst_path.with_file_name(tmp_name)
 }
@@ -133,7 +130,10 @@ impl Applier {
         };
 
         // Validate: if we have Copy ops, we MUST have dst data
-        let has_copy_ops = delta.ops.iter().any(|op| matches!(op, DeltaOp::Copy { .. }));
+        let has_copy_ops = delta
+            .ops
+            .iter()
+            .any(|op| matches!(op, DeltaOp::Copy { .. }));
         if has_copy_ops && dst_data.is_none() {
             return Err(ResyncError::DeltaApplyFailed(format!(
                 "delta contains Copy ops but destination {} does not exist",
@@ -206,12 +206,12 @@ impl Applier {
                         )));
                     }
 
-                    writer.write_all(&dst[start..end]).map_err(|e| {
-                        ResyncError::Io {
+                    writer
+                        .write_all(&dst[start..end])
+                        .map_err(|e| ResyncError::Io {
                             path: tmp_path.display().to_string(),
                             source: e,
-                        }
-                    })?;
+                        })?;
                 }
                 DeltaOp::Write { src_offset, len } => {
                     let start = *src_offset as usize;
@@ -228,12 +228,12 @@ impl Applier {
                         )));
                     }
 
-                    writer.write_all(&src_data[start..end]).map_err(|e| {
-                        ResyncError::Io {
+                    writer
+                        .write_all(&src_data[start..end])
+                        .map_err(|e| ResyncError::Io {
                             path: tmp_path.display().to_string(),
                             source: e,
-                        }
-                    })?;
+                        })?;
                     bytes_written += *len as u64;
                 }
             }
@@ -320,12 +320,7 @@ impl Applier {
     /// Fully copy a file atomically (shortcut when no destination exists yet).
     ///
     /// BUG FIX #8: Now uses temp file + rename for crash safety, same as apply().
-    pub fn copy_new(
-        &self,
-        src_path: &Path,
-        dst_path: &Path,
-        src_entry: &FileEntry,
-    ) -> Result<u64> {
+    pub fn copy_new(&self, src_path: &Path, dst_path: &Path, src_entry: &FileEntry) -> Result<u64> {
         if self.dry_run {
             return Ok(src_entry.size);
         }

@@ -24,7 +24,7 @@ use tracing::{debug, info};
 use crate::delta::DeltaOp;
 use crate::hasher::{FileManifest, Hash256, Hasher};
 use crate::net::protocol::*;
-use crate::net::tls::{TlsConfig, MaybeTlsStream, connect_stream};
+use crate::net::tls::{connect_stream, MaybeTlsStream, TlsConfig};
 use crate::scanner::{FileEntry, Scanner};
 
 // ─── Client options ──────────────────────────────────────────────────────────
@@ -188,9 +188,9 @@ impl Client {
         for action in &plan {
             match action {
                 SyncAction::Full(rel_path) => {
-                    let entry = file_map
-                        .get(rel_path)
-                        .ok_or_else(|| anyhow::anyhow!("file not in manifest: {}", rel_path.display()))?;
+                    let entry = file_map.get(rel_path).ok_or_else(|| {
+                        anyhow::anyhow!("file not in manifest: {}", rel_path.display())
+                    })?;
 
                     self.send_full_file(&mut framed, entry).await?;
                 }
@@ -200,9 +200,9 @@ impl Client {
                     chunk_size: _,
                     dst_size: _,
                 } => {
-                    let entry = file_map
-                        .get(rel_path)
-                        .ok_or_else(|| anyhow::anyhow!("file not in manifest: {}", rel_path.display()))?;
+                    let entry = file_map.get(rel_path).ok_or_else(|| {
+                        anyhow::anyhow!("file not in manifest: {}", rel_path.display())
+                    })?;
 
                     self.send_delta(&mut framed, entry, chunk_hashes, &hasher)
                         .await?;
@@ -232,9 +232,7 @@ impl Client {
             } => {
                 let elapsed = start.elapsed();
                 let throughput = if elapsed.as_secs_f64() > 0.0 {
-                    bytesize::ByteSize::b(
-                        (bytes_transferred as f64 / elapsed.as_secs_f64()) as u64,
-                    )
+                    bytesize::ByteSize::b((bytes_transferred as f64 / elapsed.as_secs_f64()) as u64)
                 } else {
                     bytesize::ByteSize::b(0)
                 };
@@ -430,9 +428,7 @@ fn compute_network_delta(
                 src_offset: src_chunk.offset,
                 len: src_chunk.len,
             });
-            wire_ops.push(DeltaWireOp::Write {
-                len: src_chunk.len,
-            });
+            wire_ops.push(DeltaWireOp::Write { len: src_chunk.len });
             write_data.push(data);
         }
     }

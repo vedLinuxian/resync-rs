@@ -21,16 +21,10 @@ use crate::hasher::{ChunkMeta, FileManifest};
 pub enum DeltaOp {
     /// Copy bytes from the existing destination at `src_offset` in the
     /// destination mmap. (Hashes match — zero transfer needed.)
-    Copy {
-        src_offset: u64,
-        len: usize,
-    },
+    Copy { src_offset: u64, len: usize },
     /// Write bytes from the source file at `src_offset`.
     /// (Hash mismatch or chunk beyond destination EOF.)
-    Write {
-        src_offset: u64,
-        len: usize,
-    },
+    Write { src_offset: u64, len: usize },
 }
 
 impl DeltaOp {
@@ -105,9 +99,8 @@ impl DeltaEngine {
 
         // CDC-aware path: use hash-map lookup instead of index-based comparison,
         // because CDC chunks won't align by index after an insertion/deletion.
-        let use_cdc_path = src.is_cdc
-            && dst.map(|d| d.is_cdc).unwrap_or(false)
-            && !dst_chunks.is_empty();
+        let use_cdc_path =
+            src.is_cdc && dst.map(|d| d.is_cdc).unwrap_or(false) && !dst_chunks.is_empty();
 
         if use_cdc_path {
             // Build a map from hash → (offset, len) of the *first* matching dst chunk.

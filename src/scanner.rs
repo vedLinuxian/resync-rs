@@ -10,7 +10,7 @@ use jwalk::WalkDir;
 use rayon::prelude::*;
 use tracing::warn;
 
-use crate::error::{ResyncError, Result};
+use crate::error::{Result, ResyncError};
 
 // ─── Data model ──────────────────────────────────────────────────────────────
 
@@ -319,11 +319,8 @@ mod tests {
         let tmp = make_tree();
         #[cfg(unix)]
         {
-            std::os::unix::fs::symlink(
-                tmp.path().join("a.txt"),
-                tmp.path().join("link_to_a"),
-            )
-            .unwrap();
+            std::os::unix::fs::symlink(tmp.path().join("a.txt"), tmp.path().join("link_to_a"))
+                .unwrap();
             let scanner = Scanner::new(tmp.path(), true, false).unwrap();
             let result = scanner.scan().unwrap();
             // a.txt, b.txt, sub/c.txt, link_to_a (dereferenced)

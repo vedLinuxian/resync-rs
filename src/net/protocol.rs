@@ -56,7 +56,6 @@ const FLAG_ZSTD: u8 = 0x01;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Msg {
     // ─── Handshake ───────────────────────────────────────────────────────
-
     /// Client → Server: initiate session.
     Hello {
         version: u32,
@@ -65,13 +64,9 @@ pub enum Msg {
     },
 
     /// Server → Client: accept or reject handshake.
-    HelloAck {
-        ok: bool,
-        error: Option<String>,
-    },
+    HelloAck { ok: bool, error: Option<String> },
 
     // ─── Manifest exchange ───────────────────────────────────────────────
-
     /// Client → Server: start a new sync session.
     BeginSync {
         dest_path: PathBuf,
@@ -99,7 +94,6 @@ pub enum Msg {
     ManifestEnd,
 
     // ─── Server sync decisions ───────────────────────────────────────────
-
     /// Server → Client: file does not exist on server, send full content.
     NeedFull { rel_path: PathBuf },
 
@@ -121,7 +115,6 @@ pub enum Msg {
     },
 
     // ─── Data transfer (client → server) ─────────────────────────────────
-
     /// Client → Server: begin streaming a full file.
     FileDataStart {
         rel_path: PathBuf,
@@ -158,7 +151,6 @@ pub enum Msg {
     DeltaEnd,
 
     // ─── Completion ──────────────────────────────────────────────────────
-
     /// Server → Client: report files deleted (if --delete was set).
     DeleteReport { deleted_count: u64 },
 
@@ -277,14 +269,12 @@ impl Decoder for MsgCodec {
                 // Use payload bytes directly.
                 payload.to_vec()
             }
-            FLAG_ZSTD => {
-                zstd::stream::decode_all(payload.as_ref()).map_err(|e| {
-                    std::io::Error::new(
-                        std::io::ErrorKind::InvalidData,
-                        format!("zstd decompress error: {e}"),
-                    )
-                })?
-            }
+            FLAG_ZSTD => zstd::stream::decode_all(payload.as_ref()).map_err(|e| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("zstd decompress error: {e}"),
+                )
+            })?,
             other => {
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::InvalidData,
@@ -319,13 +309,8 @@ impl Encoder<Msg> for MsgCodec {
 
         // Decide whether to compress this payload.
         let (flag, payload) = if self.compress && raw.len() > COMPRESS_THRESHOLD {
-            let compressed =
-                zstd::stream::encode_all(raw.as_slice(), COMPRESS_LEVEL).map_err(|e| {
-                    std::io::Error::new(
-                        std::io::ErrorKind::Other,
-                        format!("zstd compress error: {e}"),
-                    )
-                })?;
+            let compressed = zstd::stream::encode_all(raw.as_slice(), COMPRESS_LEVEL)
+                .map_err(|e| std::io::Error::other(format!("zstd compress error: {e}")))?;
 
             // Only use compressed output if it's actually smaller.
             if compressed.len() < raw.len() {

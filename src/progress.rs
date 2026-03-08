@@ -109,7 +109,9 @@ impl ProgressReporter {
     /// Called when a file is skipped (hashes match — no work needed).
     pub fn on_file_skipped(&self, size: u64) {
         self.counters.files_skipped.fetch_add(1, Ordering::Relaxed);
-        self.counters.bytes_skipped.fetch_add(size, Ordering::Relaxed);
+        self.counters
+            .bytes_skipped
+            .fetch_add(size, Ordering::Relaxed);
         self.files_bar.inc(1);
         // BUG FIX #12: Advance bytes bar for skipped files too
         self.bytes_bar.inc(size);
@@ -183,10 +185,7 @@ impl ProgressReporter {
             );
         }
         println!("  Throughput      : {}/s", ByteSize::b(throughput_bps));
-        println!(
-            "  Wall-clock time : {:.3}s",
-            elapsed.as_secs_f64()
-        );
+        println!("  Wall-clock time : {:.3}s", elapsed.as_secs_f64());
         println!("─────────────────────────────────────────────────────");
     }
 }

@@ -22,7 +22,7 @@ use tokio::net::TcpListener;
 use tokio_util::codec::Framed;
 use tracing::{error, info, warn};
 
-use crate::net::tls::{TlsConfig, MaybeTlsStream, accept_stream};
+use crate::net::tls::{accept_stream, MaybeTlsStream, TlsConfig};
 
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
@@ -193,7 +193,13 @@ async fn handle_connection(stream: MaybeTlsStream, peer: SocketAddr) -> anyhow::
 
         if !dst_full.exists() {
             // File is new — need full content
-            send(&mut framed, Msg::NeedFull { rel_path: src_file.rel_path.clone() }).await?;
+            send(
+                &mut framed,
+                Msg::NeedFull {
+                    rel_path: src_file.rel_path.clone(),
+                },
+            )
+            .await?;
             files_to_send += 1;
         } else {
             // File exists — check mtime + size
@@ -204,14 +210,19 @@ async fn handle_connection(stream: MaybeTlsStream, peer: SocketAddr) -> anyhow::
             let mtime_match = dst_secs == src_file.mtime_secs && dst_nanos == src_file.mtime_nanos;
 
             if size_match && mtime_match {
-                send(&mut framed, Msg::Skip { rel_path: src_file.rel_path.clone() }).await?;
+                send(
+                    &mut framed,
+                    Msg::Skip {
+                        rel_path: src_file.rel_path.clone(),
+                    },
+                )
+                .await?;
                 files_skipped += 1;
             } else {
                 // Need delta — hash the destination file
                 match hasher.hash_file(&dst_full) {
                     Ok(manifest) => {
-                        let chunk_hashes: Vec<_> =
-                            manifest.chunks.iter().map(|c| c.hash).collect();
+                        let chunk_hashes: Vec<_> = manifest.chunks.iter().map(|c| c.hash).collect();
                         send(
                             &mut framed,
                             Msg::NeedDelta {
@@ -231,7 +242,9 @@ async fn handle_connection(stream: MaybeTlsStream, peer: SocketAddr) -> anyhow::
                         );
                         send(
                             &mut framed,
-                            Msg::NeedFull { rel_path: src_file.rel_path.clone() },
+                            Msg::NeedFull {
+                                rel_path: src_file.rel_path.clone(),
+                            },
                         )
                         .await?;
                         files_to_send += 1;
@@ -245,8 +258,10 @@ async fn handle_connection(stream: MaybeTlsStream, peer: SocketAddr) -> anyhow::
     info!("plan: {files_to_send} to transfer, {files_skipped} skipped");
 
     // ── 6. Receive file data / deltas and apply ───────────────────────────
-    let mut stats = SyncStats::default();
-    stats.files_skipped = files_skipped;
+    let mut stats = SyncStats {
+        files_skipped,
+        ..SyncStats::default()
+    };
 
     for _ in 0..files_to_send {
         match recv(&mut framed).await? {
@@ -257,18 +272,16 @@ async fn handle_connection(stream: MaybeTlsStream, peer: SocketAddr) -> anyhow::
                 mtime_nanos,
                 mode,
             } => {
-                receive_full_file(
-                    &mut framed,
-                    &dest_path,
-                    &rel_path,
-                    size,
+                let meta = RecvMeta {
+                    dest_root: &dest_path,
+                    rel_path: &rel_path,
                     mtime_secs,
                     mtime_nanos,
                     mode,
                     preserve_perms,
                     preserve_times,
-                )
-                .await?;
+                };
+                receive_full_file(&mut framed, &meta, size).await?;
                 stats.files_new += 1;
                 stats.bytes_transferred += size;
             }
@@ -281,20 +294,17 @@ async fn handle_connection(stream: MaybeTlsStream, peer: SocketAddr) -> anyhow::
                 mtime_nanos,
                 mode,
             } => {
-                let transferred = receive_delta(
-                    &mut framed,
-                    &dest_path,
-                    &rel_path,
-                    final_size,
-                    write_count,
-                    &ops,
+                let meta = RecvMeta {
+                    dest_root: &dest_path,
+                    rel_path: &rel_path,
                     mtime_secs,
                     mtime_nanos,
                     mode,
                     preserve_perms,
                     preserve_times,
-                )
-                .await?;
+                };
+                let transferred =
+                    receive_delta(&mut framed, &meta, final_size, write_count, &ops).await?;
                 stats.files_updated += 1;
                 stats.bytes_transferred += transferred;
             }
@@ -345,9 +355,7 @@ async fn handle_connection(stream: MaybeTlsStream, peer: SocketAddr) -> anyhow::
                     fs::remove_dir(&dir.abs_path).ok();
                 }
 
-                send(
-                    &mut framed, Msg::DeleteReport { deleted_count }
-                ).await?;
+                send(&mut framed, Msg::DeleteReport { deleted_count }).await?;
             }
         }
     }
@@ -377,19 +385,25 @@ async fn handle_connection(stream: MaybeTlsStream, peer: SocketAddr) -> anyhow::
 
 // ─── File receive helpers ────────────────────────────────────────────────────
 
-/// Receive a full file streamed as FileDataChunk messages.
-async fn receive_full_file(
-    framed: &mut Framed<MaybeTlsStream, MsgCodec>,
-    dest_root: &Path,
-    rel_path: &Path,
-    size: u64,
+/// Metadata for a received file (avoids passing too many args).
+#[allow(dead_code)]
+struct RecvMeta<'a> {
+    dest_root: &'a Path,
+    rel_path: &'a Path,
     mtime_secs: i64,
     mtime_nanos: u32,
     mode: u32,
     preserve_perms: bool,
     preserve_times: bool,
+}
+
+/// Receive a full file streamed as FileDataChunk messages.
+async fn receive_full_file(
+    framed: &mut Framed<MaybeTlsStream, MsgCodec>,
+    meta: &RecvMeta<'_>,
+    size: u64,
 ) -> anyhow::Result<()> {
-    let dst_path = dest_root.join(rel_path);
+    let dst_path = meta.dest_root.join(meta.rel_path);
     if let Some(parent) = dst_path.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -433,7 +447,7 @@ async fn receive_full_file(
             if received != size {
                 anyhow::bail!(
                     "size mismatch for {}: expected {size}, got {received}",
-                    rel_path.display()
+                    meta.rel_path.display()
                 );
             }
         }
@@ -444,7 +458,14 @@ async fn receive_full_file(
     match result {
         Ok(()) => {
             fs::rename(&tmp_path, &dst_path)?;
-            apply_metadata_raw(&dst_path, mtime_secs, mtime_nanos, mode, preserve_perms, preserve_times);
+            apply_metadata_raw(
+                &dst_path,
+                meta.mtime_secs,
+                meta.mtime_nanos,
+                meta.mode,
+                meta.preserve_perms,
+                meta.preserve_times,
+            );
             Ok(())
         }
         Err(e) => {
@@ -457,18 +478,12 @@ async fn receive_full_file(
 /// Receive and apply a delta for a changed file.
 async fn receive_delta(
     framed: &mut Framed<MaybeTlsStream, MsgCodec>,
-    dest_root: &Path,
-    rel_path: &Path,
+    meta: &RecvMeta<'_>,
     final_size: u64,
     write_count: u32,
     ops: &[DeltaWireOp],
-    mtime_secs: i64,
-    mtime_nanos: u32,
-    mode: u32,
-    preserve_perms: bool,
-    preserve_times: bool,
 ) -> anyhow::Result<u64> {
-    let dst_path = dest_root.join(rel_path);
+    let dst_path = meta.dest_root.join(meta.rel_path);
     let tmp_path = temp_path(&dst_path);
 
     // Read existing destination file data (for Copy ops)
@@ -551,7 +566,7 @@ async fn receive_delta(
         if bytes_written_total != final_size {
             anyhow::bail!(
                 "delta size mismatch for {}: expected {} bytes, wrote {}",
-                rel_path.display(),
+                meta.rel_path.display(),
                 final_size,
                 bytes_written_total
             );
@@ -563,7 +578,14 @@ async fn receive_delta(
     match result {
         Ok(transferred) => {
             fs::rename(&tmp_path, &dst_path)?;
-            apply_metadata_raw(&dst_path, mtime_secs, mtime_nanos, mode, preserve_perms, preserve_times);
+            apply_metadata_raw(
+                &dst_path,
+                meta.mtime_secs,
+                meta.mtime_nanos,
+                meta.mode,
+                meta.preserve_perms,
+                meta.preserve_times,
+            );
             Ok(transferred)
         }
         Err(e) => {

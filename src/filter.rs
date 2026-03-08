@@ -477,9 +477,10 @@ impl RateLimiter {
 // ── Itemize-changes formatter ────────────────────────────────────────────────
 
 /// What kind of update was performed on a file.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ChangeType {
     /// Sent/received to remote.
+    #[default]
     Transfer,
     /// Created locally.
     Create,
@@ -510,12 +511,6 @@ pub struct ItemizedChange {
     pub checksum_changed: bool,
     /// Relative path.
     pub path: String,
-}
-
-impl Default for ChangeType {
-    fn default() -> Self {
-        ChangeType::Transfer
-    }
 }
 
 impl std::fmt::Display for ItemizedChange {
@@ -704,9 +699,8 @@ mod tests {
 
     #[test]
     fn exclude_glob() {
-        let engine = FilterEngine::from_rules(vec![
-            FilterRule::parse("*.log", FilterKind::Exclude),
-        ]);
+        let engine =
+            FilterEngine::from_rules(vec![FilterRule::parse("*.log", FilterKind::Exclude)]);
         assert!(engine.is_excluded(Path::new("debug.log"), false));
         assert!(!engine.is_excluded(Path::new("main.rs"), false));
     }
@@ -723,18 +717,16 @@ mod tests {
 
     #[test]
     fn dir_only_pattern() {
-        let engine = FilterEngine::from_rules(vec![
-            FilterRule::parse(".git/", FilterKind::Exclude),
-        ]);
+        let engine =
+            FilterEngine::from_rules(vec![FilterRule::parse(".git/", FilterKind::Exclude)]);
         assert!(engine.is_excluded(Path::new(".git"), true));
         assert!(!engine.is_excluded(Path::new(".git"), false)); // not a directory
     }
 
     #[test]
     fn anchored_pattern() {
-        let engine = FilterEngine::from_rules(vec![
-            FilterRule::parse("src/**/*.rs", FilterKind::Exclude),
-        ]);
+        let engine =
+            FilterEngine::from_rules(vec![FilterRule::parse("src/**/*.rs", FilterKind::Exclude)]);
         assert!(engine.is_excluded(Path::new("src/net/server.rs"), false));
         assert!(!engine.is_excluded(Path::new("tests/e2e.rs"), false));
     }

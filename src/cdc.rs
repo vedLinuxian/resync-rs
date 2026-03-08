@@ -325,8 +325,7 @@ impl CdcChunker {
                 .par_chunks(BATCH_SIZE)
                 .flat_map_iter(|batch| {
                     batch.iter().map(|&(idx, (offset, len))| {
-                        let hash: Hash256 =
-                            *blake3::hash(&data[offset..offset + len]).as_bytes();
+                        let hash: Hash256 = *blake3::hash(&data[offset..offset + len]).as_bytes();
                         ChunkMeta {
                             index: idx as u64,
                             offset: offset as u64,
@@ -541,8 +540,8 @@ mod tests {
         let meta = chunker.chunk_and_hash(&data);
 
         for cm in &meta {
-            let expected = *blake3::hash(&data[cm.offset as usize..cm.offset as usize + cm.len])
-                .as_bytes();
+            let expected =
+                *blake3::hash(&data[cm.offset as usize..cm.offset as usize + cm.len]).as_bytes();
             assert_eq!(cm.hash, expected, "hash mismatch at chunk {}", cm.index);
         }
     }

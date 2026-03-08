@@ -13,7 +13,7 @@ use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::cdc::CdcChunker;
-use crate::error::{ResyncError, Result};
+use crate::error::{Result, ResyncError};
 
 // ─── Data model ──────────────────────────────────────────────────────────────
 
@@ -93,12 +93,18 @@ pub struct Hasher {
 
 impl Hasher {
     pub fn new(chunk_size: usize) -> Self {
-        Self { chunk_size, use_cdc: false }
+        Self {
+            chunk_size,
+            use_cdc: false,
+        }
     }
 
     pub fn with_cdc(chunk_size: usize) -> Self {
         assert!(chunk_size >= 512, "chunk_size must be >= 512");
-        Self { chunk_size, use_cdc: true }
+        Self {
+            chunk_size,
+            use_cdc: true,
+        }
     }
 
     /// Compute the [`FileManifest`] for `path` using parallel BLAKE3 hashing.
@@ -200,8 +206,7 @@ impl Hasher {
         } else {
             // Parallel path with batching — each rayon work item processes
             // CHUNKS_PER_BATCH chunks, amortizing scheduling overhead.
-            let all_chunks: Vec<(usize, &[u8])> =
-                data.chunks(chunk_size).enumerate().collect();
+            let all_chunks: Vec<(usize, &[u8])> = data.chunks(chunk_size).enumerate().collect();
             all_chunks
                 .par_chunks(CHUNKS_PER_BATCH)
                 .flat_map_iter(|batch| {

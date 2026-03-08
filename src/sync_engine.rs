@@ -29,7 +29,7 @@ use tracing::{debug, error, info, warn};
 use crate::applier::Applier;
 use crate::cli::Cli;
 use crate::delta::DeltaEngine;
-use crate::error::{ResyncError, Result};
+use crate::error::{Result, ResyncError};
 use crate::filter::{FilterEngine, RateLimiter};
 use crate::hasher::Hasher;
 use crate::progress::ProgressReporter;
@@ -180,8 +180,8 @@ impl SyncEngine {
             src_result
                 .dirs
                 .retain(|d| !filter.is_excluded(&d.rel_path, true));
-            let excluded = (file_before - src_result.files.len())
-                + (dir_before - src_result.dirs.len());
+            let excluded =
+                (file_before - src_result.files.len()) + (dir_before - src_result.dirs.len());
             if excluded > 0 {
                 info!("Filtered out {excluded} entries by exclude/include rules");
             }
@@ -240,11 +240,7 @@ impl SyncEngine {
                 let dst_path = self.opts.dest.join(&src_entry.rel_path);
 
                 if self.opts.verbose {
-                    println!(
-                        "{} -> {}",
-                        src_entry.rel_path.display(),
-                        dst_path.display()
-                    );
+                    println!("{} -> {}", src_entry.rel_path.display(), dst_path.display());
                 }
 
                 if !dst_path.exists() {
@@ -260,10 +256,7 @@ impl SyncEngine {
                             );
                         }
                         Err(e) => {
-                            error!(
-                                "copy_new failed for {}: {e}",
-                                src_entry.rel_path.display()
-                            );
+                            error!("copy_new failed for {}: {e}", src_entry.rel_path.display());
                             error_count.fetch_add(1, Ordering::Relaxed);
                             reporter.on_file_error(src_entry.size);
                         }
@@ -297,10 +290,7 @@ impl SyncEngine {
                     let src_manifest = match hasher.hash_file(&src_entry.abs_path) {
                         Ok(m) => m,
                         Err(e) => {
-                            error!(
-                                "hash failed for {}: {e}",
-                                src_entry.abs_path.display()
-                            );
+                            error!("hash failed for {}: {e}", src_entry.abs_path.display());
                             error_count.fetch_add(1, Ordering::Relaxed);
                             reporter.on_file_error(src_entry.size);
                             return;
@@ -325,10 +315,10 @@ impl SyncEngine {
                     }
 
                     // Track delta-reused bytes for accurate stats
-                    reporter.counters.bytes_delta_reused.fetch_add(
-                        delta.reuse_bytes,
-                        Ordering::Relaxed,
-                    );
+                    reporter
+                        .counters
+                        .bytes_delta_reused
+                        .fetch_add(delta.reuse_bytes, Ordering::Relaxed);
 
                     debug!(
                         "DELTA {} — {:.1}% transfer ({} / {})",
@@ -393,12 +383,7 @@ impl SyncEngine {
                         }
                     }
 
-                    match applier.apply(
-                        &src_entry.abs_path,
-                        &dst_path,
-                        &delta,
-                        src_entry,
-                    ) {
+                    match applier.apply(&src_entry.abs_path, &dst_path, &delta, src_entry) {
                         Ok(bytes) => {
                             reporter
                                 .counters
@@ -412,10 +397,7 @@ impl SyncEngine {
 
                             // ── Itemize changes output ───────────────────────
                             if self.opts.itemize_changes {
-                                println!(
-                                    ">f.st...... {}",
-                                    src_entry.rel_path.display()
-                                );
+                                println!(">f.st...... {}", src_entry.rel_path.display());
                             }
 
                             // ── Structured log entry ─────────────────────────
@@ -432,10 +414,7 @@ impl SyncEngine {
                             }
                         }
                         Err(e) => {
-                            error!(
-                                "apply failed for {}: {e}",
-                                src_entry.rel_path.display()
-                            );
+                            error!("apply failed for {}: {e}", src_entry.rel_path.display());
                             error_count.fetch_add(1, Ordering::Relaxed);
                             reporter.on_file_error(src_entry.size);
                         }
@@ -491,11 +470,8 @@ impl SyncEngine {
 
             // BUG FIX #14: Also remove orphan empty directories
             if !self.opts.dry_run {
-                let src_dirs: HashSet<PathBuf> = src_result
-                    .dirs
-                    .iter()
-                    .map(|d| d.rel_path.clone())
-                    .collect();
+                let src_dirs: HashSet<PathBuf> =
+                    src_result.dirs.iter().map(|d| d.rel_path.clone()).collect();
                 // Sort by depth descending so children are removed before parents
                 let mut orphan_dirs: Vec<_> = dst_result
                     .dirs

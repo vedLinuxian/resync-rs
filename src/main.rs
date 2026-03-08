@@ -9,7 +9,7 @@ use anyhow::Context;
 use clap::Parser;
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
-use resync_rs::cli::{Cli, Command, parse_remote};
+use resync_rs::cli::{parse_remote, Cli, Command};
 use resync_rs::net::client::{Client, ClientOptions};
 use resync_rs::net::server::Server;
 use resync_rs::net::tls::TlsConfig;
@@ -28,17 +28,20 @@ fn main() -> anyhow::Result<()> {
     // the RUST_LOG env var (RUST_LOG takes precedence).
     tracing_subscriber::registry()
         .with(fmt::layer().with_target(false).compact())
-        .with(
-            EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| EnvFilter::new(&args.log_level)),
-        )
+        .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(&args.log_level)))
         .init();
 
     tracing::info!("resync-rs starting");
 
     match args.command {
         // ── Phase 2: Server daemon ────────────────────────────────────────
-        Some(Command::Serve { bind, port, tls, tls_cert, tls_key }) => {
+        Some(Command::Serve {
+            bind,
+            port,
+            tls,
+            tls_cert,
+            tls_key,
+        }) => {
             let addr = format!("{bind}:{port}")
                 .parse()
                 .context("invalid bind address")?;
@@ -54,7 +57,12 @@ fn main() -> anyhow::Result<()> {
         }
 
         // ── Phase 2: Network push ─────────────────────────────────────────
-        Some(Command::Push { source, remote, tls, tls_verify }) => {
+        Some(Command::Push {
+            source,
+            remote,
+            tls,
+            tls_verify,
+        }) => {
             let (addr, remote_dest) = parse_remote(&remote)?;
             let tls_config = TlsConfig {
                 enabled: tls,
@@ -106,4 +114,3 @@ fn main() -> anyhow::Result<()> {
 
     Ok(())
 }
-
