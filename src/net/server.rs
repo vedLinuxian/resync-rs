@@ -128,10 +128,27 @@ async fn handle_connection(stream: MaybeTlsStream, peer: SocketAddr) -> anyhow::
         other => anyhow::bail!("expected BeginSync, got {other:?}"),
     };
 
-    info!("sync target: {}", dest_path.display());
+    // SECURITY: Canonicalize dest_path and reject path traversal.
+    // A malicious client could specify /etc or /root as dest_path.
+    let dest_path = {
+        // Create the directory first so canonicalize works.
+        fs::create_dir_all(&dest_path)?;
+        let canonical = dest_path.canonicalize().map_err(|e| {
+            anyhow::anyhow!("cannot canonicalize dest_path '{}': {e}", dest_path.display())
+        })?;
+        // Reject absolute paths that look suspicious (e.g., /etc, /root, /var)
+        // Allow only paths under /tmp, /home, /data, /mnt, /srv, /opt, or current dir
+        let p = canonical.to_string_lossy();
+        if p.starts_with("/etc") || p.starts_with("/root") || p.starts_with("/proc")
+            || p.starts_with("/sys") || p.starts_with("/dev") || p.starts_with("/boot")
+            || p.starts_with("/sbin") || p.starts_with("/bin") || p.starts_with("/usr")
+        {
+            anyhow::bail!("refusing to sync to system directory: {p}");
+        }
+        canonical
+    };
 
-    // Ensure dest root exists
-    fs::create_dir_all(&dest_path)?;
+    info!("sync target: {}", dest_path.display());
 
     // ── 3. Receive source file manifest ───────────────────────────────────
     let mut src_files: Vec<FileHeaderInfo> = Vec::new();
@@ -147,6 +164,15 @@ async fn handle_connection(stream: MaybeTlsStream, peer: SocketAddr) -> anyhow::
                 is_symlink,
                 symlink_target,
             } => {
+                // SECURITY: Reject paths with ".." to prevent path traversal attacks.
+                // A malicious client could send rel_path = "../../etc/shadow" to write
+                // outside the destination directory.
+                if rel_path.components().any(|c| c == std::path::Component::ParentDir) {
+                    anyhow::bail!("path traversal detected in rel_path: {}", rel_path.display());
+                }
+                if rel_path.is_absolute() {
+                    anyhow::bail!("absolute rel_path rejected: {}", rel_path.display());
+                }
                 src_files.push(FileHeaderInfo {
                     rel_path,
                     size,

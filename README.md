@@ -7,7 +7,7 @@
 [![Build Status](https://img.shields.io/github/actions/workflow/status/vedLinuxian/resync-rs/ci.yml?branch=main&style=flat-square)](https://github.com/vedLinuxian/resync-rs/actions)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg?style=flat-square)](LICENSE)
 [![Crates.io](https://img.shields.io/crates/v/resync-rs?style=flat-square)](https://crates.io/crates/resync-rs)
-[![Rust](https://img.shields.io/badge/rust-2021_edition-orange?style=flat-square)](https://www.rust-lang.org)
+[![Rust](https://img.shields.io/badge/rust-2024_edition-orange?style=flat-square)](https://www.rust-lang.org)
 
 A ground-up rewrite of rsync in Rust, engineered for modern hardware.
 resync saturates NVMe drives and multi-core CPUs where rsync leaves
@@ -44,6 +44,8 @@ resync saturates NVMe drives and multi-core CPUs where rsync leaves
 | Huge pages | No | MADV_HUGEPAGE for large file I/O |
 | Timestamp precision | 1-second granularity | Nanosecond via utimensat(2) |
 | Sparse files | Basic support | Seek-over-zeros with block detection |
+| Extended attributes | No | `--xattrs` / `-X` (xattr crate) |
+| Security hardening | Minimal | Path traversal guards, decompression limits, setuid stripping |
 | Language | C (manual memory) | Rust (memory-safe, fearless concurrency) |
 
 ---
@@ -52,7 +54,7 @@ resync saturates NVMe drives and multi-core CPUs where rsync leaves
 
 ### Prerequisites
 
-- Rust 1.75+ (2021 edition)
+- Rust 1.85+ (2024 edition)
 - Linux (primary), macOS, or FreeBSD
 - CMake and a C compiler (for aws-lc-sys / ring TLS backend)
 
@@ -105,26 +107,26 @@ Tested on a single machine with NVMe storage. Results are wall-clock time
 measured with `time`. Run `bash bench/benchmark.sh` to reproduce on your
 hardware.
 
-#### Full Copy (fresh destination)
+#### Standard Benchmark (10K files)
 
 ```
 Scenario                                rsync       resync      Speedup
 ------------------------------------------------------------------------
-100K small files (12 bytes each)        5.50s       1.93s       2.9x
-500K small files (12 bytes each)        27.1s       9.26s       2.9x
-3 x 100 MB large files                 0.43s       0.13s       3.3x
+Small files: full copy (10K)            .253s       .098s       2.5x
+Small files: no change (10K)            .081s       .024s       3.2x
+Small files: 5% changed                .105s       .042s       2.4x
+Medium files: full copy (500)           .427s       .097s       4.3x
+Large files: full copy (5x100M)         .483s       .146s       3.3x
+Large files: delta (10% changed)        .699s       .479s       1.4x
 ```
 
-#### Incremental No-Change (all files already synced)
+#### Scale Test (100K files, no-change)
 
 ```
 Scenario                                rsync       resync      Speedup
 ------------------------------------------------------------------------
-100K files, manifest cache              0.42s       0.23s       1.8x
-500K files, manifest cache              1.84s       1.61s       1.1x
-3 x 100 MB, manifest cache             0.066s      0.005s      13.2x
-100K files, --trust-mtime              0.42s       0.002s      210x
-500K files, --trust-mtime              1.84s       0.003s      613x
+100K files, standard                    4.00s       0.26s       15x
+100K files, --trust-mtime              4.00s       0.025s      160x
 ```
 
 The `--trust-mtime` flag enables ultra-fast no-change detection by checking
@@ -133,8 +135,8 @@ where artifacts are replaced atomically, but not safe when files may be
 edited in-place. Without `--trust-mtime`, resync always does live stat()
 of every source file for full correctness.
 
-Typical speedups range from **1.8x to 13x** in default (fully-correct) mode,
-and **200-600x** with `--trust-mtime` on large trees with no changes.
+Typical speedups range from **2.4x to 4.3x** for full copies, **3.2x to 15x**
+for no-change detection, and **160x** with `--trust-mtime` at 100K files.
 
 The advantage grows on large files (zero-copy I/O wins) and at scale
 (parallel scanning + manifest cache wins).
@@ -279,6 +281,7 @@ PRESERVATION
   -l, --links            Preserve symbolic links
   -o, --owner            Preserve file owner (requires root)
   -g, --group            Preserve file group
+  -X, --xattrs         Preserve extended attributes
   -D, --devices          Preserve device files
       --specials         Preserve special files
 
@@ -424,6 +427,15 @@ resync pull -avz --tls server.example.com:2377:/data/source/ /local/dest/
   A crash or power failure never leaves a corrupt file at the destination path.
 - **No unsafe network parsing**: The binary protocol uses serde + bincode
   with length-prefixed framing. No manual buffer management.
+- **Path traversal protection**: Server and client validate all relative
+  paths, rejecting `..` components and absolute paths. Server refuses to
+  write into system directories (/etc, /proc, /sys, /dev, /boot).
+- **Decompression bomb limit**: Zstd-compressed network messages are capped
+  at 256 MiB decompressed. Oversized payloads are rejected.
+- **setuid/setgid stripping**: Non-root users automatically strip setuid
+  and setgid bits from synced files, preventing privilege escalation.
+- **Streaming file writes**: Pull mode streams data to disk via temp files
+  instead of accumulating in memory, preventing OOM on large transfers.
 
 See [SECURITY.md](SECURITY.md) for vulnerability reporting.
 
@@ -440,7 +452,7 @@ resync is designed to minimize compute and energy consumption:
 - **Content-Defined Chunking**: A 1-byte edit in a 1 GB file transfers only
   the affected chunk (~8 KB), not the whole file.
 
-The 2-13x wall-clock speedup (up to 600x with `--trust-mtime`) translates
+The 2-4x wall-clock speedup (up to 160x with `--trust-mtime`) translates
 directly to proportionally less CPU time and energy per sync operation.
 
 ---

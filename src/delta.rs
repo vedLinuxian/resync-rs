@@ -28,10 +28,12 @@ pub enum DeltaOp {
 }
 
 impl DeltaOp {
+    #[inline]
     pub fn is_write(&self) -> bool {
         matches!(self, DeltaOp::Write { .. })
     }
 
+    #[inline]
     pub fn byte_len(&self) -> usize {
         match self {
             DeltaOp::Copy { len, .. } => *len,
@@ -56,11 +58,13 @@ pub struct FileDelta {
 impl FileDelta {
     /// Returns `true` when the source and destination are byte-identical
     /// (same content AND same size) — no I/O is needed.
+    #[inline]
     pub fn is_no_op(&self) -> bool {
         self.transfer_bytes == 0
     }
 
     /// Savings ratio: 0.0 = nothing saved, 1.0 = fully identical.
+    #[inline]
     pub fn savings_ratio(&self) -> f64 {
         let total = self.transfer_bytes + self.reuse_bytes;
         if total == 0 {
@@ -166,11 +170,13 @@ impl DeltaEngine {
     }
 
     /// Convenience: compute delta when both manifests are known.
+    #[inline]
     pub fn compute_full(src: &FileManifest, dst: &FileManifest) -> FileDelta {
         Self::compute(src, Some(dst))
     }
 
     /// Convenience: compute delta for a brand-new destination file.
+    #[inline]
     pub fn compute_new(src: &FileManifest) -> FileDelta {
         Self::compute(src, None)
     }

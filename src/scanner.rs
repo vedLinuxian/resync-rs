@@ -22,7 +22,6 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
 use std::time::SystemTime;
 
 use rayon::prelude::*;
@@ -273,38 +272,37 @@ impl Scanner {
     fn scan_recursive(&self) -> Result<ScanResult> {
         use std::os::unix::fs::MetadataExt;
 
-        let result = Mutex::new(ScanResult::default());
+        let mut final_result = ScanResult::default();
 
         // BFS processing: start with root, process each level in parallel
         let mut current_level: Vec<(PathBuf, PathBuf)> = vec![(self.root.clone(), PathBuf::new())];
 
         while !current_level.is_empty() {
-            let next_level = Mutex::new(Vec::new());
+            // PERF: Lock-free parallel scan — each directory produces its own
+            // ScanResult + next-level dirs. No shared Mutex during scanning.
+            // Results are collected via rayon's par_iter().map().collect() which
+            // uses thread-local buffers internally, eliminating contention.
+            let level_results: Vec<(ScanResult, Vec<(PathBuf, PathBuf)>)> = current_level
+                .par_iter()
+                .map(|(dir_abs, dir_rel)| {
+                let mut local_result = ScanResult::default();
+                let mut local_next: Vec<(PathBuf, PathBuf)> = Vec::new();
 
-            // Process all directories at this level in parallel
-            current_level.par_iter().for_each(|(dir_abs, dir_rel)| {
                 let entries = match std::fs::read_dir(dir_abs) {
                     Ok(e) => e,
                     Err(err) => {
                         warn!("cannot read dir {}: {err}", dir_abs.display());
-                        result.lock().unwrap().errors += 1;
-                        return;
+                        local_result.errors += 1;
+                        return (local_result, local_next);
                     }
                 };
-
-                // Collect this directory's results locally to minimize lock contention
-                let mut local_files = Vec::new();
-                let mut local_dirs = Vec::new();
-                let mut local_next = Vec::new();
-                let mut local_bytes: u64 = 0;
-                let mut local_errors: u64 = 0;
 
                 for entry in entries {
                     let entry = match entry {
                         Ok(e) => e,
                         Err(err) => {
                             warn!("scan error in {}: {err}", dir_abs.display());
-                            local_errors += 1;
+                            local_result.errors += 1;
                             continue;
                         }
                     };
@@ -321,7 +319,7 @@ impl Scanner {
                         Ok(ft) => ft,
                         Err(e) => {
                             warn!("file_type failed for {}: {e}", abs.display());
-                            local_errors += 1;
+                            local_result.errors += 1;
                             continue;
                         }
                     };
@@ -334,12 +332,12 @@ impl Scanner {
                                 Ok(m) => m,
                                 Err(e) => {
                                     warn!("lstat failed for {}: {e}", abs.display());
-                                    local_errors += 1;
+                                    local_result.errors += 1;
                                     continue;
                                 }
                             };
                             let target = std::fs::read_link(&abs).ok();
-                            local_files.push(FileEntry {
+                            local_result.files.push(FileEntry {
                                 abs_path: abs,
                                 rel_path: rel,
                                 size: 0,
@@ -355,8 +353,8 @@ impl Scanner {
                         } else {
                             match std::fs::metadata(&abs) {
                                 Ok(meta) if meta.is_file() => {
-                                    local_bytes += meta.len();
-                                    local_files.push(FileEntry {
+                                    local_result.total_bytes += meta.len();
+                                    local_result.files.push(FileEntry {
                                         abs_path: abs,
                                         rel_path: rel,
                                         size: meta.len(),
@@ -371,7 +369,7 @@ impl Scanner {
                                     });
                                 }
                                 Ok(meta) if meta.is_dir() => {
-                                    local_dirs.push(DirEntry {
+                                    local_result.dirs.push(DirEntry {
                                         abs_path: abs.clone(),
                                         rel_path: rel.clone(),
                                         mode: meta.mode(),
@@ -389,7 +387,7 @@ impl Scanner {
                             Ok(m) => m,
                             Err(e) => {
                                 warn!("stat failed for {}: {e}", abs.display());
-                                local_errors += 1;
+                                local_result.errors += 1;
                                 continue;
                             }
                         };
@@ -397,7 +395,7 @@ impl Scanner {
                         if self.one_file_system && meta.dev() != self.root_dev {
                             continue;
                         }
-                        local_dirs.push(DirEntry {
+                        local_result.dirs.push(DirEntry {
                             abs_path: abs.clone(),
                             rel_path: rel.clone(),
                             mode: meta.mode(),
@@ -409,12 +407,12 @@ impl Scanner {
                             Ok(m) => m,
                             Err(e) => {
                                 warn!("stat failed for {}: {e}", abs.display());
-                                local_errors += 1;
+                                local_result.errors += 1;
                                 continue;
                             }
                         };
-                        local_bytes += meta.len();
-                        local_files.push(FileEntry {
+                        local_result.total_bytes += meta.len();
+                        local_result.files.push(FileEntry {
                             abs_path: abs,
                             rel_path: rel,
                             size: meta.len(),
@@ -430,24 +428,22 @@ impl Scanner {
                     }
                 }
 
-                // Merge local results into shared state (one lock per directory)
-                {
-                    let mut r = result.lock().unwrap();
-                    r.files.extend(local_files);
-                    r.dirs.extend(local_dirs);
-                    r.total_bytes += local_bytes;
-                    r.errors += local_errors;
-                }
-                {
-                    let mut nl = next_level.lock().unwrap();
-                    nl.extend(local_next);
-                }
-            });
+                (local_result, local_next)
+            }).collect();
 
-            current_level = next_level.into_inner().unwrap();
+            // Merge all per-directory results into final_result (no locks needed)
+            let mut next = Vec::new();
+            for (partial, dirs) in level_results {
+                final_result.files.extend(partial.files);
+                final_result.dirs.extend(partial.dirs);
+                final_result.total_bytes += partial.total_bytes;
+                final_result.errors += partial.errors;
+                next.extend(dirs);
+            }
+            current_level = next;
         }
 
-        Ok(result.into_inner().unwrap())
+        Ok(final_result)
     }
 
     /// Incremental source scan — only rescans directories whose mtime changed.

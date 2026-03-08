@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Rust 2024 edition** -- upgraded from Rust 2021 to 2024 edition, requiring
+  rustc 1.85+. Updated all dependencies to latest versions.
 - **Two-tier manifest cache** -- persistent `.resync-manifest` (zstd-compressed
   bincode) and `.resync-toc` (tiny dir-mtime index). On repeated syncs the
   destination is never re-scanned; the manifest provides all metadata.
@@ -16,8 +18,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `readdir()` for unchanged directories. Still does live `stat()` on every
   file for correctness. Cuts source scan time proportionally to unchanged dirs.
 - **`--trust-mtime` flag** -- opt-in ultra-fast mode. If directory mtimes
-  match the TOC, skips the entire sync pipeline (~200-600x faster). Safe for
-  deployments and CI; not safe when files are edited in-place.
+  match the TOC, skips the entire sync pipeline (~160x faster at 100K files).
+  Safe for deployments and CI; not safe when files are edited in-place.
+- **`--xattrs` / `-X` flag** -- preserve extended attributes during sync,
+  using the `xattr` crate. Copies all user/system xattrs from source to dest.
 - **`--files-from FILE`** -- read file list from FILE (one path per line),
   syncing only those files. rsync-compatible.
 - **`--chmod PERMS`** -- override destination permissions using chmod-style
@@ -31,6 +35,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   local destination (reverse of `push`). Supports `--tls` and `--tls-verify`.
 - **Parallel directory walking** -- scanner now uses BFS with parallel readdir
   via rayon's work-stealing pool, saturating NVMe IOPS.
+
+### Security
+
+- **Path traversal protection** -- server and client validate all relative
+  paths, rejecting `..` components and absolute paths. Server refuses writes
+  to system directories (/etc, /proc, /sys, /dev, /boot, /root, /sbin, /bin,
+  /usr).
+- **Zstd decompression bomb limit** -- compressed messages are capped at
+  256 MiB decompressed. Oversized payloads are rejected with an error.
+- **setuid/setgid stripping** -- non-root users automatically strip setuid
+  and setgid bits from synced files, preventing privilege escalation.
+- **Pull-mode streaming** -- file data is streamed to disk via temp files
+  instead of accumulating in memory, preventing OOM on large transfers.
+- **SIMD-accelerated zero detection** -- `is_all_zeros()` uses u128 alignment
+  for 16x throughput in sparse file detection.
 
 ### Fixed
 
@@ -48,11 +67,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Performance
 
-- **Full copy**: 2.9x faster at 100K-500K files, 3.3x on large files
-- **No-change (correct)**: 1.8x at 100K, 13.2x on large files (manifest skip)
-- **No-change (--trust-mtime)**: 210x at 100K, 613x at 500K (TOC fast path)
-- Manifest compression: zstd reduces manifest from 37 MB → 6.6 MB at 500K
-- Skip manifest save when nothing changed (~80 ms saved per no-op sync)
+- **Lock-free parallel scanner** -- replaced Mutex-based shared-state scanner
+  with per-directory `par_iter().map().collect()` pattern. Eliminates lock
+  contention during BFS directory walking.
+- **`#[inline]` annotations** -- added to 16 hot-path functions in delta,
+  hasher, filter, and CDC modules for better inlining across crate boundaries.
+- **HashSet<&Path> optimization** -- source path set uses borrowed references
+  instead of cloned PathBuf, eliminating ~100K allocations at scale.
+- **Native CPU targeting** -- `.cargo/config.toml` enables `-Ctarget-cpu=native`
+  for AVX-512/AVX2/SSE4.1 auto-vectorization.
+- **Dependency upgrades** -- blake3 1.5→1.8, thiserror 1→2, added xattr 1,
+  io-uring 0.7.
+- **Full copy**: 2.5-4.3x faster across workloads
+- **No-change**: 3.2x at 10K, 15x at 100K files
+- **No-change (--trust-mtime)**: 160x at 100K files
 
 ## [0.2.0] - 2025-07-15
 

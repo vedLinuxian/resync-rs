@@ -59,12 +59,18 @@ impl std::ops::Deref for FileData {
 // ─── Sparse zero detection ───────────────────────────────────────────────────
 
 /// Check if a byte slice is entirely zeros.
-/// Handles arbitrary lengths (not just multiples of block_size).
+/// Uses wide u128 comparison for 16x throughput vs byte-by-byte.
+#[inline]
 fn is_all_zeros(data: &[u8], block_size: usize) -> bool {
     if data.len() < block_size {
         return false; // Too small to bother with sparse optimization
     }
-    data.iter().all(|&b| b == 0)
+    // SAFETY: align_to reinterprets the byte slice as u128 chunks.
+    // Prefix/suffix bytes that don't align are checked individually.
+    let (prefix, aligned, suffix) = unsafe { data.align_to::<u128>() };
+    prefix.iter().all(|&b| b == 0)
+        && aligned.iter().all(|&w| w == 0)
+        && suffix.iter().all(|&b| b == 0)
 }
 
 // ─── Unique temp file naming ─────────────────────────────────────────────────
@@ -181,6 +187,7 @@ pub struct Applier {
     pub preserve_times: bool,
     pub preserve_owner: bool,
     pub preserve_group: bool,
+    pub preserve_xattrs: bool,
     pub dry_run: bool,
     pub fsync: bool,
     pub inplace: bool,
@@ -211,6 +218,7 @@ impl Applier {
             preserve_times,
             preserve_owner,
             preserve_group,
+            preserve_xattrs: false,
             dry_run,
             fsync,
             inplace,
@@ -242,6 +250,11 @@ impl Applier {
     /// Enable reflink (CoW) copies on supported filesystems.
     pub fn set_reflink(&mut self, enabled: bool) {
         self.reflink = enabled;
+    }
+
+    /// Enable extended attribute preservation.
+    pub fn set_xattrs(&mut self, enabled: bool) {
+        self.preserve_xattrs = enabled;
     }
 
     /// Set permission override from --chmod string.
@@ -895,10 +908,17 @@ impl Applier {
         #[cfg(unix)]
         {
             if self.preserve_perms || self.chmod_mode.is_some() {
-                let mode = if let Some(override_mode) = self.chmod_mode {
+                let raw_mode = if let Some(override_mode) = self.chmod_mode {
                     override_mode
                 } else {
                     src.mode & 0o7777
+                };
+                // SECURITY: Strip setuid/setgid bits unless running as root.
+                // A malicious source could plant setuid binaries for privilege escalation.
+                let mode = if unsafe { libc::geteuid() } != 0 {
+                    raw_mode & !0o6000 // clear setuid (04000) + setgid (02000)
+                } else {
+                    raw_mode
                 };
                 let perms = fs::Permissions::from_mode(mode);
                 fs::set_permissions(dst_path, perms).map_err(|e| ResyncError::Io {
@@ -965,6 +985,31 @@ impl Applier {
                                 new_gid,
                                 std::io::Error::last_os_error()
                             );
+                        }
+                    }
+                }
+            }
+
+            // Extended attribute preservation (--xattrs / -X)
+            if self.preserve_xattrs {
+                if let Ok(attrs) = xattr::list(&src.abs_path) {
+                    for attr in attrs {
+                        match xattr::get(&src.abs_path, &attr) {
+                            Ok(Some(value)) => {
+                                if let Err(e) = xattr::set(dst_path, &attr, &value) {
+                                    warn!(
+                                        "failed to set xattr {:?} on {}: {e}",
+                                        attr, dst_path.display()
+                                    );
+                                }
+                            }
+                            Ok(None) => {}
+                            Err(e) => {
+                                warn!(
+                                    "failed to read xattr {:?} from {}: {e}",
+                                    attr, src.abs_path.display()
+                                );
+                            }
                         }
                     }
                 }

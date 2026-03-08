@@ -276,12 +276,34 @@ impl Decoder for MsgCodec {
                 // Use payload bytes directly.
                 payload.to_vec()
             }
-            FLAG_ZSTD => zstd::stream::decode_all(payload.as_ref()).map_err(|e| {
-                std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    format!("zstd decompress error: {e}"),
-                )
-            })?,
+            FLAG_ZSTD => {
+                // SECURITY: Limit decompressed size to 256 MiB to prevent
+                // decompression bombs from a malicious peer.
+                const MAX_DECOMPRESSED: usize = 256 * 1024 * 1024;
+                let decoder = zstd::Decoder::new(payload.as_ref()).map_err(|e| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        format!("zstd init error: {e}"),
+                    )
+                })?;
+                let mut output = Vec::with_capacity(std::cmp::min(payload.len() * 4, 4 * 1024 * 1024));
+                use std::io::Read;
+                let bytes_read = decoder.take(MAX_DECOMPRESSED as u64)
+                    .read_to_end(&mut output)
+                    .map_err(|e| {
+                        std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            format!("zstd decompress error: {e}"),
+                        )
+                    })?;
+                if bytes_read >= MAX_DECOMPRESSED {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "zstd decompressed payload exceeds 256 MiB limit",
+                    ));
+                }
+                output
+            }
             other => {
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::InvalidData,

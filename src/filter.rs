@@ -120,11 +120,13 @@ impl FilterEngine {
     ///
     /// `is_dir` should be `true` when the entry is a directory so that
     /// directory-only patterns (trailing `/`) are honoured.
+    #[inline]
     pub fn is_excluded(&self, rel_path: &Path, is_dir: bool) -> bool {
         self.evaluate(rel_path, is_dir) == FilterResult::Excluded
     }
 
     /// Evaluate the full rule chain and return the outcome.
+    #[inline]
     pub fn evaluate(&self, rel_path: &Path, is_dir: bool) -> FilterResult {
         for rule in &self.rules {
             if rule.matches(rel_path, is_dir) {
@@ -138,10 +140,12 @@ impl FilterEngine {
     }
 
     /// Number of rules loaded.
+    #[inline]
     pub fn len(&self) -> usize {
         self.rules.len()
     }
 
+    #[inline]
     pub fn is_empty(&self) -> bool {
         self.rules.is_empty()
     }
@@ -182,6 +186,7 @@ impl FilterRule {
     }
 
     /// Test whether `rel_path` matches this rule.
+    #[inline]
     pub fn matches(&self, rel_path: &Path, is_dir: bool) -> bool {
         // Directory-only rules never match files.
         if self.dir_only && !is_dir {
@@ -211,6 +216,7 @@ impl FilterRule {
 // `**` matches everything including `/` (recursive wildcard).
 
 /// Match `pattern` against `text` using rsync-style glob rules.
+#[inline]
 pub fn glob_match(pattern: &str, text: &str) -> bool {
     glob_match_inner(pattern.as_bytes(), text.as_bytes(), 0)
 }
@@ -224,6 +230,7 @@ pub fn glob_match(pattern: &str, text: &str) -> bool {
 /// practice terminates instantly for sane path lengths (< 4096 chars).
 const MAX_GLOB_DEPTH: usize = 32;
 
+#[inline]
 fn glob_match_inner(pat: &[u8], txt: &[u8], depth: usize) -> bool {
     if depth > MAX_GLOB_DEPTH {
         return false;
@@ -329,6 +336,7 @@ fn glob_match_inner(pat: &[u8], txt: &[u8], depth: usize) -> bool {
 /// Try to match a `[…]` character class at the start of `pat` against `ch`.
 /// Returns `Some((matched, bytes_consumed))` or `None` if the bracket
 /// expression is malformed.
+#[inline]
 fn match_char_class(pat: &[u8], ch: u8) -> Option<(bool, usize)> {
     debug_assert!(pat[0] == b'[');
     let mut i = 1;
@@ -408,6 +416,7 @@ impl RateLimiter {
     }
 
     /// Returns `true` when the limiter is effectively unlimited.
+    #[inline]
     pub fn is_unlimited(&self) -> bool {
         let guard = self.inner.lock().unwrap();
         guard.rate_bps == 0

@@ -312,6 +312,10 @@ pub struct Cli {
     /// Use reflinks (CoW copies) on supported filesystems (btrfs, XFS).
     #[arg(long = "reflink", global = true)]
     pub reflink: bool,
+
+    /// Preserve extended attributes (xattrs). Equivalent to rsync's -X flag.
+    #[arg(short = 'X', long = "xattrs", global = true)]
+    pub xattrs: bool,
 }
 
 #[derive(Debug, Clone, Subcommand)]

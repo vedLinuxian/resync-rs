@@ -329,31 +329,52 @@ impl Client {
                     mtime_nanos,
                     ..
                 } => {
+                    // SECURITY: Reject path traversal in rel_path from server
+                    if rel_path.components().any(|c| c == std::path::Component::ParentDir) {
+                        anyhow::bail!("path traversal detected in rel_path: {}", rel_path.display());
+                    }
+                    if rel_path.is_absolute() {
+                        anyhow::bail!("absolute rel_path rejected: {}", rel_path.display());
+                    }
                     let dst_path = local_dest.join(&rel_path);
                     if let Some(parent) = dst_path.parent() {
                         std::fs::create_dir_all(parent)?;
                     }
 
-                    // Receive file data chunks
-                    let mut file_data = Vec::with_capacity(size as usize);
-                    loop {
-                        match recv(&mut framed).await? {
-                            Msg::FileDataChunk { data } => {
-                                file_data.extend_from_slice(&data);
+                    // FIX: Stream file data to disk instead of accumulating in memory.
+                    // Previously, a 10 GB file = 10 GB RAM. Now writes incrementally.
+                    {
+                        let tmp_path = dst_path.with_extension("resync.pull.tmp");
+                        let mut writer = std::io::BufWriter::with_capacity(
+                            256 * 1024,
+                            std::fs::File::create(&tmp_path)?,
+                        );
+                        loop {
+                            match recv(&mut framed).await? {
+                                Msg::FileDataChunk { data } => {
+                                    std::io::Write::write_all(&mut writer, &data)?;
+                                }
+                                Msg::FileDataEnd => break,
+                                other => anyhow::bail!("expected FileDataChunk/End, got {other:?}"),
                             }
-                            Msg::FileDataEnd => break,
-                            other => anyhow::bail!("expected FileDataChunk/End, got {other:?}"),
                         }
+                        std::io::Write::flush(&mut writer)?;
+                        drop(writer);
+                        std::fs::rename(&tmp_path, &dst_path)?;
                     }
-
-                    // Write to local file
-                    std::fs::write(&dst_path, &file_data)?;
 
                     // Apply permissions
                     #[cfg(unix)]
                     if self.opts.preserve_perms {
                         use std::os::unix::fs::PermissionsExt;
-                        let perms = std::fs::Permissions::from_mode(mode & 0o7777);
+                        // SECURITY: Strip setuid/setgid for non-root
+                        let raw = mode & 0o7777;
+                        let safe_mode = if unsafe { libc::geteuid() } != 0 {
+                            raw & !0o6000
+                        } else {
+                            raw
+                        };
+                        let perms = std::fs::Permissions::from_mode(safe_mode);
                         std::fs::set_permissions(&dst_path, perms)?;
                     }
 
@@ -376,7 +397,7 @@ impl Client {
                     }
 
                     files_received += 1;
-                    bytes_received += file_data.len() as u64;
+                    bytes_received += size;
 
                     if self.opts.verbose {
                         println!("  RECV  {}", rel_path.display());

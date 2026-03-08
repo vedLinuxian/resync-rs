@@ -59,6 +59,7 @@ impl FileManifest {
     /// (source manifest) and `other` (destination manifest).
     ///
     /// BUG FIX: Also counts chunks that only exist in `other` (dst shrunk).
+    #[inline]
     pub fn diff_count(&self, other: &FileManifest) -> usize {
         let common_diffs = self
             .chunks
@@ -72,6 +73,7 @@ impl FileManifest {
     }
 
     /// Bytes that would need to be transferred given `other` as destination.
+    #[inline]
     pub fn delta_bytes(&self, other: &FileManifest) -> u64 {
         let changed: u64 = self
             .chunks
@@ -278,6 +280,7 @@ impl Hasher {
     }
 
     /// Hash a small in-memory buffer (used for tests and network protocol).
+    #[inline]
     pub fn hash_buffer(&self, data: &[u8]) -> FileManifest {
         if data.is_empty() {
             return FileManifest {

@@ -104,6 +104,7 @@ pub struct SyncOptions {
     pub chown: Option<String>,
     pub checksum_verify: bool,
     pub reflink: bool,
+    pub xattrs: bool,
     pub timeout: u64,
     pub human_readable: bool,
     pub devices: bool,
@@ -176,6 +177,7 @@ impl From<&Cli> for SyncOptions {
             chown: cli.chown.clone(),
             checksum_verify: cli.checksum_verify,
             reflink: cli.reflink,
+            xattrs: cli.xattrs,
             timeout: cli.timeout,
             human_readable: cli.human_readable,
             devices: cli.devices,
@@ -419,11 +421,12 @@ impl SyncEngine {
         }
 
         // ── 4. Collect src_paths for --delete ─────────────────────────────
-        let src_paths: HashSet<PathBuf> = if self.opts.delete {
+        // PERF: Use references to avoid cloning every PathBuf.
+        let src_paths: HashSet<&Path> = if self.opts.delete {
             src_result
                 .files
                 .iter()
-                .map(|f| f.rel_path.clone())
+                .map(|f| f.rel_path.as_path())
                 .collect()
         } else {
             HashSet::new()
@@ -469,6 +472,7 @@ impl SyncEngine {
         applier.set_append(self.opts.append);
         applier.set_partial(self.opts.partial);
         applier.set_reflink(self.opts.reflink);
+        applier.set_xattrs(self.opts.xattrs);
         if let Some(ref chmod) = self.opts.chmod {
             applier.set_chmod(chmod);
         }
