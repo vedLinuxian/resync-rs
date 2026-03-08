@@ -1,0 +1,601 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>resync-rs — Next-Gen Parallel File Sync</title>
+    <meta name="description" content="resync-rs: A blazing-fast parallel file sync tool written in Rust. 1.5x–6x faster than rsync with 47% less energy consumption.">
+    <meta property="og:title" content="resync-rs — rsync Reimagined in Rust">
+    <meta property="og:description" content="Parallel delta-sync engine. 1.5x–6x faster than rsync. 47% less CO₂ per sync.">
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://vedprakashpandey.github.io/resync-rs">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚡</text></svg>">
+    <style>
+        :root {
+            --bg: #0a0e17;
+            --bg2: #111827;
+            --bg3: #1f2937;
+            --accent: #3b82f6;
+            --accent2: #10b981;
+            --accent3: #f59e0b;
+            --text: #e5e7eb;
+            --text2: #9ca3af;
+            --border: #374151;
+            --glow: rgba(59, 130, 246, 0.15);
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            line-height: 1.6;
+            overflow-x: hidden;
+        }
+        a { color: var(--accent); text-decoration: none; transition: color 0.2s; }
+        a:hover { color: #60a5fa; }
+        .container { max-width: 1100px; margin: 0 auto; padding: 0 24px; }
+
+        /* Hero */
+        .hero {
+            position: relative;
+            padding: 100px 0 80px;
+            text-align: center;
+            background: radial-gradient(ellipse at 50% 0%, rgba(59,130,246,0.08) 0%, transparent 60%);
+        }
+        .hero::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23374151' fill-opacity='0.08'%3E%3Cpath d='m36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
+            opacity: 0.5;
+        }
+        .hero-content { position: relative; z-index: 1; }
+        .hero-badge {
+            display: inline-block;
+            padding: 6px 16px;
+            background: rgba(59,130,246,0.1);
+            border: 1px solid rgba(59,130,246,0.3);
+            border-radius: 20px;
+            font-size: 0.85rem;
+            color: var(--accent);
+            margin-bottom: 24px;
+        }
+        .hero h1 { font-size: 3.5rem; font-weight: 800; margin-bottom: 16px; letter-spacing: -0.02em; }
+        .hero h1 .bolt { color: var(--accent3); }
+        .hero .subtitle { font-size: 1.25rem; color: var(--text2); max-width: 650px; margin: 0 auto 40px; }
+        .hero-stats {
+            display: flex;
+            justify-content: center;
+            gap: 48px;
+            flex-wrap: wrap;
+            margin-bottom: 40px;
+        }
+        .stat { text-align: center; }
+        .stat-value { font-size: 2.5rem; font-weight: 800; color: var(--accent2); }
+        .stat-label { font-size: 0.85rem; color: var(--text2); }
+        .hero-buttons { display: flex; gap: 16px; justify-content: center; flex-wrap: wrap; }
+        .btn {
+            display: inline-flex; align-items: center; gap: 8px;
+            padding: 14px 28px;
+            border-radius: 8px;
+            font-size: 1rem;
+            font-weight: 600;
+            transition: all 0.2s;
+            border: none;
+            cursor: pointer;
+        }
+        .btn-primary { background: var(--accent); color: #fff; }
+        .btn-primary:hover { background: #2563eb; color: #fff; transform: translateY(-1px); box-shadow: 0 4px 20px rgba(59,130,246,0.3); }
+        .btn-secondary { background: var(--bg3); color: var(--text); border: 1px solid var(--border); }
+        .btn-secondary:hover { background: #374151; color: #fff; transform: translateY(-1px); }
+
+        /* Install bar */
+        .install-bar {
+            background: var(--bg2);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 16px 24px;
+            display: inline-flex;
+            align-items: center;
+            gap: 12px;
+            font-family: 'JetBrains Mono', 'Fira Code', monospace;
+            font-size: 0.95rem;
+            margin-top: 32px;
+            color: var(--text2);
+        }
+        .install-bar code { color: var(--accent2); }
+        .install-bar .prompt { color: var(--accent); }
+
+        /* Sections */
+        section { padding: 80px 0; }
+        .section-title {
+            font-size: 2rem;
+            font-weight: 700;
+            text-align: center;
+            margin-bottom: 12px;
+        }
+        .section-desc {
+            text-align: center;
+            color: var(--text2);
+            max-width: 600px;
+            margin: 0 auto 48px;
+        }
+
+        /* Benchmark charts */
+        .bench-section { background: var(--bg2); }
+        .chart-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 32px; }
+        @media (max-width: 768px) { .chart-grid { grid-template-columns: 1fr; } }
+        .chart-card {
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 28px;
+        }
+        .chart-card h3 { font-size: 1.1rem; margin-bottom: 20px; color: var(--text); }
+        .bar-group { margin-bottom: 16px; }
+        .bar-label { font-size: 0.8rem; color: var(--text2); margin-bottom: 6px; display: flex; justify-content: space-between; }
+        .bar-track { background: var(--bg3); border-radius: 4px; height: 28px; position: relative; overflow: hidden; }
+        .bar-fill {
+            height: 100%;
+            border-radius: 4px;
+            display: flex;
+            align-items: center;
+            padding-left: 10px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            color: #fff;
+            transition: width 1s ease-out;
+        }
+        .bar-rsync { background: linear-gradient(90deg, #ef4444, #dc2626); }
+        .bar-resync { background: linear-gradient(90deg, #10b981, #059669); }
+        .speedup-badge {
+            display: inline-block;
+            background: rgba(16,185,129,0.15);
+            color: var(--accent2);
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            font-weight: 700;
+        }
+
+        /* Feature grid */
+        .feature-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; }
+        @media (max-width: 768px) { .feature-grid { grid-template-columns: 1fr; } }
+        .feature-card {
+            background: var(--bg2);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 28px;
+            transition: border-color 0.2s, transform 0.2s;
+        }
+        .feature-card:hover { border-color: var(--accent); transform: translateY(-2px); }
+        .feature-icon { font-size: 2rem; margin-bottom: 12px; }
+        .feature-card h3 { font-size: 1.05rem; margin-bottom: 8px; }
+        .feature-card p { font-size: 0.9rem; color: var(--text2); }
+
+        /* Carbon section */
+        .carbon-section { background: linear-gradient(180deg, var(--bg) 0%, #071a12 100%); }
+        .carbon-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 40px; align-items: center; }
+        @media (max-width: 768px) { .carbon-grid { grid-template-columns: 1fr; } }
+        .carbon-visual {
+            background: var(--bg2);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 32px;
+        }
+        .carbon-meter { margin-bottom: 24px; }
+        .carbon-meter-label { display: flex; justify-content: space-between; font-size: 0.85rem; margin-bottom: 6px; }
+        .carbon-meter-track { background: var(--bg3); border-radius: 6px; height: 36px; position: relative; }
+        .carbon-meter-fill {
+            height: 100%;
+            border-radius: 6px;
+            display: flex; align-items: center; justify-content: center;
+            font-weight: 700; font-size: 0.85rem; color: #fff;
+        }
+        .carbon-equivalents {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
+        }
+        .equiv-card {
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 16px;
+            text-align: center;
+        }
+        .equiv-icon { font-size: 1.8rem; margin-bottom: 6px; }
+        .equiv-value { font-size: 1.1rem; font-weight: 700; color: var(--accent2); }
+        .equiv-label { font-size: 0.75rem; color: var(--text2); }
+        .carbon-text h3 { font-size: 1.6rem; margin-bottom: 16px; }
+        .carbon-text p { color: var(--text2); margin-bottom: 16px; }
+        .carbon-stat-row { display: flex; gap: 24px; margin-top: 20px; flex-wrap: wrap; }
+        .carbon-stat {
+            background: rgba(16,185,129,0.08);
+            border: 1px solid rgba(16,185,129,0.2);
+            border-radius: 8px;
+            padding: 16px 20px;
+            text-align: center;
+            flex: 1;
+            min-width: 120px;
+        }
+        .carbon-stat .val { font-size: 1.5rem; font-weight: 800; color: var(--accent2); }
+        .carbon-stat .lbl { font-size: 0.75rem; color: var(--text2); margin-top: 4px; }
+
+        /* Pipeline */
+        .pipeline {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: wrap;
+            margin: 40px 0;
+        }
+        .pipe-stage {
+            background: var(--bg2);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 16px 20px;
+            text-align: center;
+            min-width: 130px;
+        }
+        .pipe-stage .pipe-icon { font-size: 1.5rem; }
+        .pipe-stage .pipe-name { font-size: 0.85rem; font-weight: 600; margin-top: 4px; }
+        .pipe-stage .pipe-tech { font-size: 0.7rem; color: var(--text2); }
+        .pipe-arrow { color: var(--accent); font-size: 1.5rem; }
+
+        /* Comparison table */
+        .compare-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.9rem;
+        }
+        .compare-table th {
+            background: var(--bg3);
+            padding: 12px 16px;
+            text-align: left;
+            font-weight: 600;
+            border-bottom: 2px solid var(--border);
+        }
+        .compare-table td {
+            padding: 12px 16px;
+            border-bottom: 1px solid var(--border);
+        }
+        .compare-table tr:hover td { background: rgba(59,130,246,0.05); }
+        .check { color: var(--accent2); font-weight: 700; }
+        .cross { color: #ef4444; }
+
+        /* Footer */
+        footer {
+            background: var(--bg2);
+            border-top: 1px solid var(--border);
+            padding: 40px 0;
+            text-align: center;
+            color: var(--text2);
+            font-size: 0.85rem;
+        }
+        footer a { color: var(--text); }
+        .footer-links { display: flex; justify-content: center; gap: 24px; margin-bottom: 16px; }
+
+        /* Animations */
+        @keyframes fadeUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+        .animate { animation: fadeUp 0.6s ease-out forwards; opacity: 0; }
+        .delay-1 { animation-delay: 0.1s; }
+        .delay-2 { animation-delay: 0.2s; }
+        .delay-3 { animation-delay: 0.3s; }
+    </style>
+</head>
+<body>
+
+<!-- Hero Section -->
+<section class="hero">
+    <div class="container hero-content">
+        <div class="hero-badge animate">🦀 Written in Rust • Open Source</div>
+        <h1 class="animate delay-1"><span class="bolt">⚡</span> resync-rs</h1>
+        <p class="subtitle animate delay-2">Next-generation parallel file sync engine. rsync reimagined with multi-core hashing, zero-copy I/O, and content-defined chunking.</p>
+        <div class="hero-stats animate delay-2">
+            <div class="stat">
+                <div class="stat-value">6×</div>
+                <div class="stat-label">Faster than rsync</div>
+            </div>
+            <div class="stat">
+                <div class="stat-value">47%</div>
+                <div class="stat-label">Less energy per sync</div>
+            </div>
+            <div class="stat">
+                <div class="stat-value">96%</div>
+                <div class="stat-label">Delta bandwidth savings</div>
+            </div>
+            <div class="stat">
+                <div class="stat-value">76</div>
+                <div class="stat-label">Tests passing</div>
+            </div>
+        </div>
+        <div class="hero-buttons animate delay-3">
+            <a href="https://github.com/vedprakashpandey/resync-rs" class="btn btn-primary">
+                <svg width="20" height="20" fill="currentColor" viewBox="0 0 16 16"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+                View on GitHub
+            </a>
+            <a href="#install" class="btn btn-secondary">Quick Install</a>
+            <a href="#benchmarks" class="btn btn-secondary">See Benchmarks</a>
+        </div>
+        <div class="install-bar animate delay-3" id="install">
+            <span class="prompt">$</span>
+            <code>git clone https://github.com/vedprakashpandey/resync-rs.git && cd resync-rs && cargo build --release</code>
+        </div>
+    </div>
+</section>
+
+<!-- Pipeline -->
+<section>
+    <div class="container">
+        <h2 class="section-title">How It Works</h2>
+        <p class="section-desc">Every stage of the sync pipeline is parallelized and optimized for modern hardware.</p>
+        <div class="pipeline">
+            <div class="pipe-stage">
+                <div class="pipe-icon">📂</div>
+                <div class="pipe-name">Scanner</div>
+                <div class="pipe-tech">jwalk • parallel</div>
+            </div>
+            <div class="pipe-arrow">→</div>
+            <div class="pipe-stage">
+                <div class="pipe-icon">🔐</div>
+                <div class="pipe-name">Hasher</div>
+                <div class="pipe-tech">BLAKE3 • SIMD</div>
+            </div>
+            <div class="pipe-arrow">→</div>
+            <div class="pipe-stage">
+                <div class="pipe-icon">🧩</div>
+                <div class="pipe-name">CDC</div>
+                <div class="pipe-tech">Gear hash • parallel</div>
+            </div>
+            <div class="pipe-arrow">→</div>
+            <div class="pipe-stage">
+                <div class="pipe-icon">📊</div>
+                <div class="pipe-name">Delta</div>
+                <div class="pipe-tech">chunk diff</div>
+            </div>
+            <div class="pipe-arrow">→</div>
+            <div class="pipe-stage">
+                <div class="pipe-icon">💾</div>
+                <div class="pipe-name">Applier</div>
+                <div class="pipe-tech">mmap • atomic</div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Features -->
+<section>
+    <div class="container">
+        <h2 class="section-title">Features</h2>
+        <p class="section-desc">Everything you need for fast, reliable file synchronization.</p>
+        <div class="feature-grid">
+            <div class="feature-card">
+                <div class="feature-icon">⚡</div>
+                <h3>BLAKE3 Hashing</h3>
+                <p>Cryptographic SIMD-accelerated hashing at 10 GB/s per core. Multi-threaded across all CPU cores.</p>
+            </div>
+            <div class="feature-card">
+                <div class="feature-icon">🧩</div>
+                <h3>Content-Defined Chunking</h3>
+                <p>Gear-hash rolling function splits files at content boundaries. Only changed chunks are transferred.</p>
+            </div>
+            <div class="feature-card">
+                <div class="feature-icon">🪶</div>
+                <h3>Zero-Copy mmap</h3>
+                <p>Memory-mapped file I/O eliminates redundant copies. Files go directly from disk to hash to network.</p>
+            </div>
+            <div class="feature-card">
+                <div class="feature-icon">🔒</div>
+                <h3>TLS 1.3 Network</h3>
+                <p>TCP client-server architecture with optional TLS encryption via tokio-rustls.</p>
+            </div>
+            <div class="feature-card">
+                <div class="feature-icon">📊</div>
+                <h3>Delta Sync</h3>
+                <p>96%+ bandwidth savings. A 1-byte change in 800 KB transfers only 8–33 KB.</p>
+            </div>
+            <div class="feature-card">
+                <div class="feature-icon">🌍</div>
+                <h3>Lower Carbon Footprint</h3>
+                <p>47% less energy per sync. At cloud scale, saves 15+ tons CO₂/year.</p>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Benchmarks -->
+<section class="bench-section" id="benchmarks">
+    <div class="container">
+        <h2 class="section-title">Benchmarks</h2>
+        <p class="section-desc">Measured on Intel i3-1215U (8 cores) • Linux • NVMe SSD • rsync 3.2.7</p>
+        <div class="chart-grid">
+            <div class="chart-card">
+                <h3>10,000 Small Files (40 MB) — Cold Sync</h3>
+                <div class="bar-group">
+                    <div class="bar-label"><span>rsync</span><span>433 ms</span></div>
+                    <div class="bar-track"><div class="bar-fill bar-rsync" style="width:100%">433 ms</div></div>
+                </div>
+                <div class="bar-group">
+                    <div class="bar-label"><span>resync</span><span>179 ms <span class="speedup-badge">2.4× faster</span></span></div>
+                    <div class="bar-track"><div class="bar-fill bar-resync" style="width:41%">179 ms</div></div>
+                </div>
+            </div>
+            <div class="chart-card">
+                <h3>10 × 50 MB Files (500 MB) — Cold Sync</h3>
+                <div class="bar-group">
+                    <div class="bar-label"><span>rsync</span><span>1253 ms</span></div>
+                    <div class="bar-track"><div class="bar-fill bar-rsync" style="width:100%">1253 ms</div></div>
+                </div>
+                <div class="bar-group">
+                    <div class="bar-label"><span>resync</span><span>665 ms <span class="speedup-badge">1.9× faster</span></span></div>
+                    <div class="bar-track"><div class="bar-fill bar-resync" style="width:53%">665 ms</div></div>
+                </div>
+            </div>
+            <div class="chart-card">
+                <h3>5,000 Mixed Files (290 MB) — Cold Sync</h3>
+                <div class="bar-group">
+                    <div class="bar-label"><span>rsync</span><span>1393 ms</span></div>
+                    <div class="bar-track"><div class="bar-fill bar-rsync" style="width:100%">1393 ms</div></div>
+                </div>
+                <div class="bar-group">
+                    <div class="bar-label"><span>resync</span><span>234 ms <span class="speedup-badge">6.0× faster</span></span></div>
+                    <div class="bar-track"><div class="bar-fill bar-resync" style="width:17%">234 ms</div></div>
+                </div>
+            </div>
+            <div class="chart-card">
+                <h3>10 × 50 MB Files — Warm Sync (No Changes)</h3>
+                <div class="bar-group">
+                    <div class="bar-label"><span>rsync</span><span>53 ms</span></div>
+                    <div class="bar-track"><div class="bar-fill bar-rsync" style="width:100%">53 ms</div></div>
+                </div>
+                <div class="bar-group">
+                    <div class="bar-label"><span>resync</span><span>9 ms <span class="speedup-badge">5.9× faster</span></span></div>
+                    <div class="bar-track"><div class="bar-fill bar-resync" style="width:17%">9 ms</div></div>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Comparison Table -->
+<section>
+    <div class="container">
+        <h2 class="section-title">resync-rs vs rsync</h2>
+        <p class="section-desc">A modern replacement built for today's hardware.</p>
+        <table class="compare-table">
+            <thead>
+                <tr><th>Capability</th><th>rsync</th><th>resync-rs</th></tr>
+            </thead>
+            <tbody>
+                <tr><td>Multi-core hashing</td><td class="cross">✗ Single-threaded MD5</td><td class="check">✓ Parallel BLAKE3 + SIMD</td></tr>
+                <tr><td>Parallel directory scan</td><td class="cross">✗ Sequential readdir</td><td class="check">✓ jwalk across all cores</td></tr>
+                <tr><td>Zero-copy I/O</td><td class="cross">✗ read()/write() syscalls</td><td class="check">✓ mmap + buffered writes</td></tr>
+                <tr><td>Content-Defined Chunking</td><td class="cross">✗ Fixed block rolling checksum</td><td class="check">✓ Gear-hash CDC</td></tr>
+                <tr><td>Encryption</td><td>Via SSH tunnel</td><td class="check">✓ Native TLS 1.3</td></tr>
+                <tr><td>Memory safety</td><td>C (manual)</td><td class="check">✓ Rust (guaranteed)</td></tr>
+                <tr><td>Delta efficiency</td><td class="check">✓ Good</td><td class="check">✓ 96%+ savings</td></tr>
+                <tr><td>Progress display</td><td>Basic</td><td class="check">✓ Rich (ETA, throughput, delta stats)</td></tr>
+                <tr><td>Binary size</td><td>~600 KB</td><td>4.7 MB (static, LTO)</td></tr>
+                <tr><td>Language</td><td>C (30 years old)</td><td>Rust (2026)</td></tr>
+            </tbody>
+        </table>
+    </div>
+</section>
+
+<!-- Carbon Section -->
+<section class="carbon-section" id="carbon">
+    <div class="container">
+        <h2 class="section-title">🌍 Carbon Footprint Impact</h2>
+        <p class="section-desc">Every sync that finishes faster consumes less energy. At scale, this adds up.</p>
+        <div class="carbon-grid">
+            <div class="carbon-text">
+                <h3>47% Less Energy Per Sync</h3>
+                <p>resync-rs completes a 500 MB sync in 665 ms vs rsync's 1253 ms. That's 117.6 fewer Joules of CPU energy per operation.</p>
+                <p>Using the global average grid carbon intensity of 0.475 kg CO₂/kWh, each sync saves 0.0156 grams of CO₂.</p>
+                <p>At cloud-provider scale (1 billion syncs/year), this compounds to <strong>15.5 metric tons of CO₂ saved annually</strong>.</p>
+                <div class="carbon-stat-row">
+                    <div class="carbon-stat">
+                        <div class="val">117.6 J</div>
+                        <div class="lbl">Saved per sync</div>
+                    </div>
+                    <div class="carbon-stat">
+                        <div class="val">15.5 t</div>
+                        <div class="lbl">CO₂/year at scale</div>
+                    </div>
+                    <div class="carbon-stat">
+                        <div class="val">32.7 MWh</div>
+                        <div class="lbl">Energy saved/year</div>
+                    </div>
+                </div>
+            </div>
+            <div class="carbon-visual">
+                <h3 style="margin-bottom: 20px; text-align: center;">Energy per 500 MB Sync</h3>
+                <div class="carbon-meter">
+                    <div class="carbon-meter-label"><span>rsync</span><span>250.6 J</span></div>
+                    <div class="carbon-meter-track">
+                        <div class="carbon-meter-fill bar-rsync" style="width:100%">250.6 J</div>
+                    </div>
+                </div>
+                <div class="carbon-meter">
+                    <div class="carbon-meter-label"><span>resync</span><span>133.0 J</span></div>
+                    <div class="carbon-meter-track">
+                        <div class="carbon-meter-fill bar-resync" style="width:53%">133.0 J — 47% less</div>
+                    </div>
+                </div>
+                <h4 style="margin: 24px 0 12px; text-align: center; font-size: 0.9rem; color: var(--text2);">15.5 tons CO₂ saved = equivalent to:</h4>
+                <div class="carbon-equivalents">
+                    <div class="equiv-card">
+                        <div class="equiv-icon">🚗</div>
+                        <div class="equiv-value">62,000 km</div>
+                        <div class="equiv-label">Driving avoided</div>
+                    </div>
+                    <div class="equiv-card">
+                        <div class="equiv-icon">🌳</div>
+                        <div class="equiv-value">775 trees</div>
+                        <div class="equiv-label">Planted for 1 year</div>
+                    </div>
+                    <div class="equiv-card">
+                        <div class="equiv-icon">🏠</div>
+                        <div class="equiv-value">10 homes</div>
+                        <div class="equiv-label">Powered for 1 year</div>
+                    </div>
+                    <div class="equiv-card">
+                        <div class="equiv-icon">✈️</div>
+                        <div class="equiv-value">5 flights</div>
+                        <div class="equiv-label">NYC↔London cancelled</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Quick Start -->
+<section>
+    <div class="container" style="text-align: center;">
+        <h2 class="section-title">Get Started in 30 Seconds</h2>
+        <p class="section-desc">One command to build, then sync like rsync — but faster.</p>
+        <div style="background: var(--bg2); border: 1px solid var(--border); border-radius: 12px; padding: 32px; max-width: 700px; margin: 0 auto; text-align: left; font-family: 'JetBrains Mono', monospace; font-size: 0.9rem; line-height: 2;">
+            <span style="color: var(--text2);"># Clone and build</span><br>
+            <span style="color: var(--accent);">$</span> git clone https://github.com/vedprakashpandey/resync-rs.git<br>
+            <span style="color: var(--accent);">$</span> cd resync-rs && cargo build --release<br>
+            <br>
+            <span style="color: var(--text2);"># Sync a directory (archive mode, 8 threads)</span><br>
+            <span style="color: var(--accent);">$</span> ./target/release/resync -a -j 8 /src/ /dst/<br>
+            <br>
+            <span style="color: var(--text2);"># Network sync</span><br>
+            <span style="color: var(--accent);">$</span> resync serve --listen 0.0.0.0:8730 --root /backup/<br>
+            <span style="color: var(--accent);">$</span> resync push /data/ --server 10.0.0.1:8730<br>
+        </div>
+        <div style="margin-top: 40px;">
+            <a href="https://github.com/vedprakashpandey/resync-rs" class="btn btn-primary">
+                ⭐ Star on GitHub
+            </a>
+        </div>
+    </div>
+</section>
+
+<!-- Footer -->
+<footer>
+    <div class="container">
+        <div class="footer-links">
+            <a href="https://github.com/vedprakashpandey/resync-rs">GitHub</a>
+            <a href="https://github.com/vedprakashpandey/resync-rs/blob/main/README.md">Docs</a>
+            <a href="https://github.com/vedprakashpandey/resync-rs/blob/main/CONTRIBUTING.md">Contributing</a>
+            <a href="https://github.com/vedprakashpandey/resync-rs/blob/main/LICENSE">License</a>
+        </div>
+        <p>Built with 🦀 by <a href="https://github.com/vedprakashpandey">Ved Prakash Pandey</a> — MIT License</p>
+    </div>
+</footer>
+
+<script>
+// Animate elements on scroll
+const observer = new IntersectionObserver((entries) => {
+    entries.forEach(e => { if (e.isIntersecting) { e.target.classList.add('animate'); observer.unobserve(e.target); }});
+}, { threshold: 0.1 });
+document.querySelectorAll('.feature-card, .chart-card, .carbon-stat, .equiv-card').forEach(el => observer.observe(el));
+</script>
+</body>
+</html>

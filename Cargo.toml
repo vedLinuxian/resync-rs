@@ -1,0 +1,79 @@
+[package]
+name = "resync-rs"
+version = "0.1.0"
+edition = "2021"
+description = "Next-generation parallel delta-sync engine — rsync reimagined in Rust"
+authors = ["Ved Prakash Pandey <linuxlover94@gmail.com>"]
+license = "MIT"
+repository = "https://github.com/vedprakashpandey/resync-rs"
+homepage = "https://vedprakashpandey.github.io/resync-rs"
+readme = "README.md"
+keywords = ["rsync", "sync", "delta", "parallel", "blake3"]
+categories = ["command-line-utilities", "filesystem"]
+
+[[bin]]
+name = "resync"
+path = "src/main.rs"
+
+[dependencies]
+# Cryptographic hashing — BLAKE3 with SIMD/AVX-512 acceleration
+blake3 = "1.5"
+
+# CPU-bound parallelism (hashing, delta matching, directory scanning)
+rayon = "1.10"
+
+# Async I/O and network (Phase 2 — TCP client-server)
+tokio = { version = "1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["codec"] }
+futures = "0.3"
+bytes = "1"
+
+# Parallel directory traversal
+jwalk = "0.8"
+
+# Zero-copy memory-mapped file I/O
+memmap2 = "0.9"
+
+# CLI argument parsing — rsync-compatible interface
+clap = { version = "4", features = ["derive", "color"] }
+
+# Real-time progress bars and transfer metrics
+indicatif = { version = "0.17", features = ["rayon"] }
+
+# Ergonomic error handling
+anyhow = "1"
+thiserror = "1"
+
+# Structured logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+
+# On-the-fly compression (Phase 2 — zstd)
+zstd = "0.13"
+
+# TLS encryption (Phase 2 — optional transport security)
+tokio-rustls = "0.26"
+rustls = { version = "0.23", features = ["ring"] }
+rustls-pemfile = "2"
+rcgen = "0.13"
+webpki-roots = "0.26"
+
+# Serialization of chunk manifests over network (Phase 2)
+serde = { version = "1", features = ["derive"] }
+bincode = "1"
+
+# Human-readable sizes (e.g. "1.2 GiB/s")
+bytesize = "1"
+
+# Duration formatting
+humantime = "2"
+
+[profile.release]
+opt-level     = 3
+lto           = "fat"
+codegen-units = 1
+panic         = "abort"
+strip         = true
+
+[dev-dependencies]
+tempfile = "3"
