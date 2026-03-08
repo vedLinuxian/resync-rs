@@ -4,9 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>resync — rsync reimagined in Rust</title>
-<meta name="description" content="resync: A parallel, zero-copy file synchronization tool written in Rust. 2-15x faster than rsync, up to 160x with --trust-mtime.">
+<meta name="description" content="resync: A parallel, zero-copy file synchronization tool written in Rust. 2-3x faster than rsync in regular mode, up to ~120x with --trust-mtime.">
 <meta property="og:title" content="resync — rsync reimagined in Rust">
-<meta property="og:description" content="Parallel, zero-copy file synchronization. 2-15x faster than rsync.">
+<meta property="og:description" content="Parallel, zero-copy file synchronization. 2-3x faster than rsync, up to 120x with --trust-mtime.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://vedLinuxian.github.io/resync-rs">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -359,8 +359,8 @@ footer a:hover { color: #6ee7b7; }
     <p class="hero-sub">Parallel delta-sync engine built in Rust. BLAKE3 hashing, zero-copy I/O, content-defined chunking. Drop-in rsync replacement that saturates your NVMe.</p>
 
     <div class="hero-stats">
-      <div class="hero-stat"><div class="num count-up" data-target="15">0</div><div class="label">x faster</div></div>
-      <div class="hero-stat"><div class="num count-up" data-target="160">0</div><div class="label">x trust-mtime</div></div>
+      <div class="hero-stat"><div class="num count-up" data-target="3">0</div><div class="label">× typical speedup</div></div>
+      <div class="hero-stat"><div class="num count-up" data-target="120">0</div><div class="label">× trust-mtime</div></div>
       <div class="hero-stat"><div class="num count-up" data-target="58">0</div><div class="label">Tests passing</div></div>
     </div>
 
@@ -463,84 +463,85 @@ footer a:hover { color: #6ee7b7; }
       <div class="bench-row fade-in">
         <div class="bench-header">
           <span class="bench-label">10K Small Files &mdash; Full Copy</span>
-          <span class="bench-speedup">2.5x faster</span>
+          <span class="bench-speedup">2.1x faster</span>
         </div>
         <div class="bench-bars">
-          <div class="bar-group"><span class="bar-label">rsync</span><div class="bar-track"><div class="bar-fill rsync-bar" data-width="100">0.253s</div></div></div>
-          <div class="bar-group"><span class="bar-label">resync</span><div class="bar-track"><div class="bar-fill resync-bar" data-width="39">0.098s</div></div></div>
+          <div class="bar-group"><span class="bar-label">rsync</span><div class="bar-track"><div class="bar-fill rsync-bar" data-width="100">0.405s</div></div></div>
+          <div class="bar-group"><span class="bar-label">resync</span><div class="bar-track"><div class="bar-fill resync-bar" data-width="46">0.188s</div></div></div>
         </div>
       </div>
 
       <div class="bench-row fade-in">
         <div class="bench-header">
           <span class="bench-label">500 Medium Files &mdash; Full Copy</span>
-          <span class="bench-speedup">4.3x faster</span>
+          <span class="bench-speedup">2.6x faster</span>
         </div>
         <div class="bench-bars">
-          <div class="bar-group"><span class="bar-label">rsync</span><div class="bar-track"><div class="bar-fill rsync-bar" data-width="100">0.427s</div></div></div>
-          <div class="bar-group"><span class="bar-label">resync</span><div class="bar-track"><div class="bar-fill resync-bar" data-width="23">0.097s</div></div></div>
+          <div class="bar-group"><span class="bar-label">rsync</span><div class="bar-track"><div class="bar-fill rsync-bar" data-width="100">0.741s</div></div></div>
+          <div class="bar-group"><span class="bar-label">resync</span><div class="bar-track"><div class="bar-fill resync-bar" data-width="38">0.282s</div></div></div>
         </div>
       </div>
 
       <div class="bench-row fade-in">
         <div class="bench-header">
           <span class="bench-label">5 x 100 MB &mdash; Full Copy</span>
-          <span class="bench-speedup">3.3x faster</span>
+          <span class="bench-speedup">2.1x faster</span>
         </div>
         <div class="bench-bars">
-          <div class="bar-group"><span class="bar-label">rsync</span><div class="bar-track"><div class="bar-fill rsync-bar" data-width="100">0.483s</div></div></div>
-          <div class="bar-group"><span class="bar-label">resync</span><div class="bar-track"><div class="bar-fill resync-bar" data-width="30">0.146s</div></div></div>
+          <div class="bar-group"><span class="bar-label">rsync</span><div class="bar-track"><div class="bar-fill rsync-bar" data-width="100">1.371s</div></div></div>
+          <div class="bar-group"><span class="bar-label">resync</span><div class="bar-track"><div class="bar-fill resync-bar" data-width="47">0.647s</div></div></div>
         </div>
       </div>
 
       <div class="bench-row fade-in">
         <div class="bench-header">
           <span class="bench-label">10K Files &mdash; No Changes</span>
-          <span class="bench-speedup">3.2x faster</span>
+          <span class="bench-speedup">2.4x faster</span>
         </div>
         <div class="bench-bars">
-          <div class="bar-group"><span class="bar-label">rsync</span><div class="bar-track"><div class="bar-fill rsync-bar" data-width="100">0.081s</div></div></div>
-          <div class="bar-group"><span class="bar-label">resync</span><div class="bar-track"><div class="bar-fill resync-bar" data-width="30">0.024s</div></div></div>
+          <div class="bar-group"><span class="bar-label">rsync</span><div class="bar-track"><div class="bar-fill rsync-bar" data-width="100">0.135s</div></div></div>
+          <div class="bar-group"><span class="bar-label">resync</span><div class="bar-track"><div class="bar-fill resync-bar" data-width="41">0.055s</div></div></div>
         </div>
       </div>
 
       <div class="bench-row fade-in">
         <div class="bench-header">
-          <span class="bench-label">100K Files &mdash; No Changes</span>
-          <span class="bench-speedup">15x faster</span>
+          <span class="bench-label">10K Files &mdash; 5% Modified</span>
+          <span class="bench-speedup">2.1x faster</span>
         </div>
         <div class="bench-bars">
-          <div class="bar-group"><span class="bar-label">rsync</span><div class="bar-track"><div class="bar-fill rsync-bar" data-width="100">4.00s</div></div></div>
-          <div class="bar-group"><span class="bar-label">resync</span><div class="bar-track"><div class="bar-fill resync-bar" data-width="7">0.26s</div></div></div>
+          <div class="bar-group"><span class="bar-label">rsync</span><div class="bar-track"><div class="bar-fill rsync-bar" data-width="100">0.194s</div></div></div>
+          <div class="bar-group"><span class="bar-label">resync</span><div class="bar-track"><div class="bar-fill resync-bar" data-width="45">0.088s</div></div></div>
         </div>
       </div>
 
       <div class="bench-row fade-in">
         <div class="bench-header">
           <span class="bench-label">100K Files &mdash; --trust-mtime</span>
-          <span class="bench-speedup">160x faster</span>
+          <span class="bench-speedup">~120x faster</span>
         </div>
         <div class="bench-bars">
-          <div class="bar-group"><span class="bar-label">rsync</span><div class="bar-track"><div class="bar-fill rsync-bar" data-width="100">4.00s</div></div></div>
-          <div class="bar-group"><span class="bar-label">resync</span><div class="bar-track"><div class="bar-fill resync-bar" data-width="1">0.025s</div></div></div>
+          <div class="bar-group"><span class="bar-label">rsync</span><div class="bar-track"><div class="bar-fill rsync-bar" data-width="100">0.760s</div></div></div>
+          <div class="bar-group"><span class="bar-label">resync</span><div class="bar-track"><div class="bar-fill resync-bar" data-width="1">0.006s</div></div></div>
         </div>
       </div>
 
       <div class="bench-row fade-in">
         <div class="bench-header">
           <span class="bench-label">Large Files &mdash; 10% Delta</span>
-          <span class="bench-speedup">1.4x faster</span>
+          <span class="bench-speedup">1.2x faster</span>
         </div>
         <div class="bench-bars">
-          <div class="bar-group"><span class="bar-label">rsync</span><div class="bar-track"><div class="bar-fill rsync-bar" data-width="100">0.699s</div></div></div>
-          <div class="bar-group"><span class="bar-label">resync</span><div class="bar-track"><div class="bar-fill resync-bar" data-width="69">0.479s</div></div></div>
+          <div class="bar-group"><span class="bar-label">rsync</span><div class="bar-track"><div class="bar-fill rsync-bar" data-width="100">1.339s</div></div></div>
+          <div class="bar-group"><span class="bar-label">resync</span><div class="bar-track"><div class="bar-fill resync-bar" data-width="78">1.039s</div></div></div>
         </div>
       </div>
     </div>
 
     <div class="bench-env fade-in">
-      <strong>Environment:</strong> Single machine, NVMe SSD (ext4), warm page cache, rsync 3.2.7, Rust 2024 edition with LTO.
-      Speedups vary by hardware. Run <code>bash bench/benchmark.sh</code> to reproduce.
+      <strong>Environment:</strong> 12th Gen Intel i3-1215U (8 cores), NVMe SSD (ext4), warm page cache, rsync 3.2.7, Rust 2024 edition with LTO.
+      Speedups vary by hardware. <code>--trust-mtime</code> timing is after warm manifest (100K files at 200 dirs).
+      Run <code>bash bench/benchmark.sh</code> to reproduce on your hardware.
     </div>
   </div>
 </section>
