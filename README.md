@@ -4,14 +4,14 @@
 
 ### Next-Generation Parallel Delta-Sync Engine — rsync Reimagined in Rust
 
-[![CI](https://github.com/vedprakashpandey/resync-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/vedprakashpandey/resync-rs/actions/workflows/ci.yml)
+[![CI](https://github.com/vedLinuxian/resync-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/vedLinuxian/resync-rs/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/Rust-1.75%2B-orange.svg)](https://www.rust-lang.org)
 [![Crates.io](https://img.shields.io/badge/crates.io-v0.1.0-green.svg)](https://crates.io/crates/resync-rs)
 
 **1.5x–6x faster than rsync** • **Parallel everything** • **Zero-copy I/O** • **96%+ delta savings**
 
-[Homepage](https://vedprakashpandey.github.io/resync-rs) · [Installation](#installation) · [Usage](#usage) · [Benchmarks](#benchmarks) · [Carbon Impact](#-carbon-footprint-reduction)
+[Homepage](https://vedLinuxian.github.io/resync-rs) · [Installation](#installation) · [Usage](#usage) · [Benchmarks](#benchmarks) · [Carbon Impact](#-carbon-footprint-reduction)
 
 </div>
 
@@ -56,7 +56,7 @@
 ### From source (recommended)
 
 ```bash
-git clone https://github.com/vedprakashpandey/resync-rs.git
+git clone https://github.com/vedLinuxian/resync-rs.git
 cd resync-rs
 cargo build --release
 # Binary at target/release/resync (4.7 MB, statically optimized)
@@ -363,7 +363,7 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ## Author
 
-**Ved Prakash Pandey** — [GitHub](https://github.com/vedprakashpandey)
+**Ved Prakash Pandey** — [GitHub](https://github.com/vedLinuxian)
 
 ---
 
