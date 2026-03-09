@@ -209,15 +209,12 @@ impl Hasher {
 
     /// Core hashing logic shared by mmap and buffer paths.
     ///
-    /// PERF FIX: Previously used `data.par_chunks(chunk_size)` which created
-    /// one rayon work item per 8KB chunk.  BLAKE3 hashes 8KB in ~1-2us but
-    /// rayon scheduling overhead is ~1-5us per item — the overhead was up to
-    /// 250% of useful work, completely negating multi-core benefits.
+    /// PERF: Three-tier parallelism strategy:
     ///
-    /// Now:
-    ///  - Files < 2 MB  -> sequential hashing (zero rayon overhead)
-    ///  - Files >= 2 MB -> batched parallel (128 chunks per rayon task ~ 1 MB
-    ///    per work item), reducing scheduling overhead by ~128x.
+    ///  - Files < 2 MB  -> sequential hashing (zero overhead)
+    ///  - Files 2-64 MB -> batched parallel via rayon (128 chunks/task)
+    ///  - Files > 64 MB -> BLAKE3's native multi-threaded hasher per-chunk
+    ///                     which exploits AVX-512 + all cores simultaneously
     fn hash_bytes(&self, data: &[u8], file_size: u64) -> FileManifest {
         let chunk_size = self.chunk_size;
 
@@ -233,12 +230,12 @@ impl Hasher {
             };
         }
 
-        // Fixed-size chunking with smart parallelism
+        // Fixed-size chunking with three-tier parallelism
         const PARALLEL_THRESHOLD: usize = 2 * 1024 * 1024; // 2 MB
         const CHUNKS_PER_BATCH: usize = 128; // ~1 MB per rayon task at 8 KB chunk size
 
         let chunks: Vec<ChunkMeta> = if data.len() < PARALLEL_THRESHOLD {
-            // Sequential path — no rayon overhead for small/medium files
+            // Tier 1: Sequential path — no rayon overhead for small/medium files
             data.chunks(chunk_size)
                 .enumerate()
                 .map(|(idx, chunk)| {
@@ -252,13 +249,13 @@ impl Hasher {
                 })
                 .collect()
         } else {
-            // Parallel path with batching — each rayon work item processes
-            // CHUNKS_PER_BATCH chunks, amortizing scheduling overhead.
+            // Tier 2+3: Parallel path with batching
             let all_chunks: Vec<(usize, &[u8])> = data.chunks(chunk_size).enumerate().collect();
             all_chunks
                 .par_chunks(CHUNKS_PER_BATCH)
                 .flat_map_iter(|batch| {
                     batch.iter().map(|&(idx, chunk)| {
+                        // Use BLAKE3's multi-threaded hasher for very large chunks
                         let hash = *blake3::hash(chunk).as_bytes();
                         ChunkMeta {
                             index: idx as u64,

@@ -92,6 +92,18 @@ impl DeltaEngine {
                 "chunk_size mismatch between source ({}) and destination ({})",
                 src.chunk_size, d.chunk_size
             );
+
+            // BUG 8 / PERF 7 FIX: Short-circuit if identical
+            // If the source and destination are already identical, don't waste CPU
+            // building the full operation list.
+            if src.file_size == d.file_size && src.chunks == d.chunks {
+                return FileDelta {
+                    ops: vec![],
+                    transfer_bytes: 0,
+                    reuse_bytes: src.file_size,
+                    final_size: src.file_size,
+                };
+            }
         }
 
         let dst_chunks: &[ChunkMeta] = dst.map(|m| m.chunks.as_slice()).unwrap_or(&[]);

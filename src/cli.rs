@@ -346,6 +346,13 @@ pub struct Cli {
     /// Preserve extended attributes (xattrs). Equivalent to rsync's -X flag.
     #[arg(short = 'X', long = "xattrs", global = true)]
     pub xattrs: bool,
+
+    /// Show estimated energy savings compared to rsync after sync completes.
+    ///
+    /// Computes: CPU-seconds saved × TDP per core → watt-hours, plus
+    /// CO₂ equivalent at global average grid intensity (0.475 kg/kWh).
+    #[arg(long = "energy-saved", global = true)]
+    pub energy_saved: bool,
 }
 
 #[derive(Debug, Clone, Subcommand)]

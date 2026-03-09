@@ -1,0 +1,28 @@
+FROM ubuntu:24.04 AS runtime
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        rsync \
+        bc \
+        python3-minimal \
+        procps \
+        iproute2 \
+        iputils-ping \
+        net-tools \
+        time \
+        coreutils \
+        findutils \
+        ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy pre-built resync binary
+COPY target/release/resync /usr/local/bin/resync
+
+# rsyncd config for fair network comparison
+RUN mkdir -p /etc /data /dest && chmod 777 /dest /data && \
+    printf '[global]\nuid = root\ngid = root\nuse chroot = no\nmax connections = 10\nlog file = /dev/null\n\n[data]\n\tpath = /dest\n\tread only = false\n\tlist = yes\n' \
+    > /etc/rsyncd.conf
+
+RUN resync --version && rsync --version | head -1
+
+CMD ["tail", "-f", "/dev/null"]

@@ -1,9 +1,9 @@
 [package]
 name = "resync-rs"
-version = "0.3.0"
+version = "1.0.0-beta.1"
 edition = "2024"
 rust-version = "1.85"
-description = "Next-generation parallel delta-sync engine — rsync reimagined in Rust"
+description = "Next-generation parallel delta-sync engine — rsync reimagined in Rust. 4-56x faster than rsync over networks."
 authors = ["Ved Prakash Pandey <linuxlover94@gmail.com>"]
 license = "MIT"
 repository = "https://github.com/vedLinuxian/resync-rs"
@@ -17,8 +17,8 @@ name = "resync"
 path = "src/main.rs"
 
 [dependencies]
-# Cryptographic hashing — BLAKE3 with SIMD/AVX-512 acceleration
-blake3 = "1.8"
+# Cryptographic hashing — BLAKE3 with SIMD/AVX-512 acceleration + rayon parallelism
+blake3 = { version = "1.8", features = ["rayon"] }
 
 # CPU-bound parallelism (hashing, delta matching, directory scanning)
 rayon = "1.10"
@@ -66,8 +66,14 @@ bytesize = "1"
 # Platform-specific syscalls (copy_file_range, madvise, chown, xattr)
 libc = "0.2"
 
+# Linux io_uring for batched syscall submission (small-file optimization)
+io-uring = "0.7"
+
 # Extended attributes (xattr) preservation
 xattr = "1"
+
+# Fast hash map (FxHash) — 2-3x faster than SipHash for non-adversarial keys
+rustc-hash = "2"
 
 [profile.release]
 opt-level     = 3

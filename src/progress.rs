@@ -94,14 +94,16 @@ impl ProgressReporter {
     /// `file_size` is the TOTAL file size (for progress bar advancement).
     /// `bytes_written` is only the bytes transferred from source (for stats).
     pub fn on_file_done(&self, file_size: u64, bytes_written: u64, file_name: &str) {
-        self.counters.files_done.fetch_add(1, Ordering::Relaxed);
+        let prev = self.counters.files_done.fetch_add(1, Ordering::Relaxed);
         self.counters
             .bytes_transferred
             .fetch_add(bytes_written, Ordering::Relaxed);
         // BUG FIX #12: Advance bytes bar by TOTAL file size so it reaches 100%
         self.files_bar.inc(1);
         self.bytes_bar.inc(file_size);
-        if self.enabled {
+        // PERF 9: Only update the UI text every 100 files or for large files
+        // to avoid expensive alloc/lock overhead during small-file storms
+        if self.enabled && (prev % 100 == 0 || file_size >= 1024 * 1024 * 10) {
             self.files_bar.set_message(file_name.to_string());
         }
     }
@@ -199,5 +201,10 @@ impl ProgressReporter {
         println!("  Throughput      : {}/s", ByteSize::b(throughput_bps));
         println!("  Wall-clock time : {:.3}s", elapsed.as_secs_f64());
         println!("─────────────────────────────────────────────────────");
+    }
+
+    /// Accessor for total source bytes.
+    pub fn total_bytes(&self) -> u64 {
+        self.total_bytes
     }
 }

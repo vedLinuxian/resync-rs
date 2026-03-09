@@ -13,6 +13,7 @@
 //! At 100K files with no changes, this eliminates ~200K stat() calls, yielding
 //! massive speedups on large trees.
 
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::HashMap;
 use std::fs;
 use std::io::Write;
@@ -141,23 +142,7 @@ impl ManifestToc {
             }
         }
 
-        // Also check root directory mtime — if files/dirs were added/removed
-        // in root, its mtime will change. We store root entry count as a
-        // secondary check.
-        let _root_meta = match std::fs::metadata(source_root) {
-            Ok(m) => m,
-            Err(_) => return false,
-        };
-        // Root has no cached mtime, but we need to verify its child count
-        // is consistent. We do a quick readdir count check.
-        let root_entries = match std::fs::read_dir(source_root) {
-            Ok(rd) => rd.count(),
-            Err(_) => return false,
-        };
-        // We expect dir_mtimes.len() subdirectories + some files in root
-        // This is a heuristic — not perfect, but catches most changes
-        // A more robust check would store root entry count in the TOC
-        let _ = root_entries; // For now, trust dir mtime checks are sufficient
+        // For now, trust dir mtime checks are sufficient
 
         true
     }
@@ -290,8 +275,8 @@ impl Manifest {
     /// suitable for use by the sync engine's comparison phase.
     ///
     /// The abs_path is reconstructed using the destination root.
-    pub fn to_dst_map(&self, dest_root: &Path) -> HashMap<PathBuf, FileEntry> {
-        let mut map = HashMap::with_capacity(self.files.len());
+    pub fn to_dst_map(&self, dest_root: &Path) -> FxHashMap<PathBuf, FileEntry> {
+        let mut map = FxHashMap::default();
         for (rel_path, entry) in &self.files {
             let abs_path = dest_root.join(rel_path);
 
@@ -300,7 +285,8 @@ impl Manifest {
                 let dur = std::time::Duration::from_nanos(entry.mtime_ns as u64);
                 SystemTime::UNIX_EPOCH + dur
             } else {
-                SystemTime::UNIX_EPOCH
+                let dur = std::time::Duration::from_nanos((-entry.mtime_ns) as u64);
+                SystemTime::UNIX_EPOCH - dur
             };
 
             map.insert(
@@ -324,7 +310,7 @@ impl Manifest {
     }
 
     /// Convert manifest dir entries back into a dir set.
-    pub fn to_dir_set(&self) -> std::collections::HashSet<PathBuf> {
+    pub fn to_dir_set(&self) -> FxHashSet<PathBuf> {
         self.dirs.keys().cloned().collect()
     }
 
@@ -354,7 +340,7 @@ impl Manifest {
         // Group files by their parent directory
         let mut files_by_dir: HashMap<PathBuf, Vec<(PathBuf, ManifestEntry)>> = HashMap::new();
         for (rel_path, entry) in &self.files {
-            let parent = rel_path.parent().unwrap_or(Path::new("")).to_path_buf();
+            let parent = rel_path.parent().map(|p| p.to_path_buf()).unwrap_or_default();
             files_by_dir
                 .entry(parent)
                 .or_default()
@@ -364,7 +350,7 @@ impl Manifest {
         // Build parent→subdirs map
         let mut subdirs_of: HashMap<PathBuf, Vec<PathBuf>> = HashMap::new();
         for rel in self.dirs.keys() {
-            let parent = rel.parent().unwrap_or(Path::new("")).to_path_buf();
+            let parent = rel.parent().map(|p| p.to_path_buf()).unwrap_or_default();
             subdirs_of.entry(parent).or_default().push(rel.clone());
         }
 

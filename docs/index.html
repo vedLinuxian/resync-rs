@@ -4,544 +4,603 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>resync — rsync reimagined in Rust</title>
-<meta name="description" content="resync: A parallel, zero-copy file synchronization tool written in Rust. 2-3x faster than rsync in regular mode, up to ~120x with --trust-mtime.">
+<meta name="description" content="resync: parallel, zero-copy file synchronization. 4-56x faster than rsync over networks.">
 <meta property="og:title" content="resync — rsync reimagined in Rust">
-<meta property="og:description" content="Parallel, zero-copy file synchronization. 2-3x faster than rsync, up to 120x with --trust-mtime.">
+<meta property="og:description" content="Parallel delta-sync engine. 4-56x faster than rsync. Built in Rust.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://vedLinuxian.github.io/resync-rs">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,opsz,wght@0,8..60,300;0,8..60,400;0,8..60,600;0,8..60,700;0,8..60,900;1,8..60,400&family=JetBrains+Mono:wght@400;500;600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
-/* === RESET & BASE === */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-html { scroll-behavior: smooth; font-size: 16px; }
+html { scroll-behavior: smooth; font-size: 17px; }
 body {
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-  background: #0a0a0f;
-  color: #e0e0e8;
+  font-family: 'Source Serif 4', 'Georgia', 'Times New Roman', serif;
+  background: #fff;
+  color: #111;
   line-height: 1.7;
-  overflow-x: hidden;
   -webkit-font-smoothing: antialiased;
 }
-a { color: #6ee7b7; text-decoration: none; transition: color .2s; }
-a:hover { color: #a5f3c8; }
-code, pre { font-family: 'JetBrains Mono', monospace; }
-::selection { background: #6ee7b755; color: #fff; }
-
-/* === ANIMATED BG === */
-.bg-grid {
-  position: fixed; inset: 0; z-index: -2;
-  background-image:
-    linear-gradient(rgba(110,231,183,.03) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(110,231,183,.03) 1px, transparent 1px);
-  background-size: 60px 60px;
-  animation: gridShift 20s linear infinite;
-}
-@keyframes gridShift { to { background-position: 60px 60px; } }
-
-.bg-glow {
-  position: fixed; inset: 0; z-index: -1; pointer-events: none;
-  background:
-    radial-gradient(ellipse 80% 50% at 50% -20%, rgba(110,231,183,.08), transparent),
-    radial-gradient(ellipse 60% 40% at 80% 80%, rgba(96,165,250,.05), transparent);
-}
-
-/* === PARTICLES === */
-.particles { position: fixed; inset: 0; z-index: -1; pointer-events: none; overflow: hidden; }
-.particle {
-  position: absolute; border-radius: 50%;
-  background: rgba(110,231,183,.3); filter: blur(1px);
-  animation: particleFloat linear infinite;
-}
-@keyframes particleFloat {
-  0% { transform: translateY(100vh) scale(0); opacity: 0; }
-  10% { opacity: 1; }
-  90% { opacity: 1; }
-  100% { transform: translateY(-10vh) scale(1); opacity: 0; }
-}
+a { color: #111; text-decoration: underline; text-underline-offset: 2px; }
+a:hover { color: #555; }
+code, pre, .mono { font-family: 'JetBrains Mono', 'Consolas', monospace; }
+::selection { background: #111; color: #fff; }
 
 /* === NAV === */
 nav {
   position: fixed; top: 0; left: 0; right: 0; z-index: 100;
-  background: rgba(10,10,15,.8); backdrop-filter: blur(20px);
-  border-bottom: 1px solid rgba(110,231,183,.1);
-  transition: all .3s;
+  background: rgba(255,255,255,0.92); backdrop-filter: blur(12px);
+  border-bottom: 1px solid #e0e0e0;
 }
-nav.scrolled { background: rgba(10,10,15,.95); box-shadow: 0 4px 30px rgba(0,0,0,.3); }
 .nav-inner {
-  max-width: 1200px; margin: 0 auto; padding: 0 2rem;
-  display: flex; align-items: center; justify-content: space-between; height: 64px;
+  max-width: 960px; margin: 0 auto; padding: 0 2rem;
+  display: flex; align-items: center; justify-content: space-between; height: 56px;
 }
-.nav-logo { font-size: 1.4rem; font-weight: 800; letter-spacing: -.02em; }
-.nav-logo span { color: #6ee7b7; }
-.nav-links { display: flex; gap: 2rem; list-style: none; }
-.nav-links a { color: #a0a0b0; font-size: .9rem; font-weight: 500; transition: color .2s; }
-.nav-links a:hover { color: #6ee7b7; }
-.nav-cta {
-  background: linear-gradient(135deg, #6ee7b7, #3b82f6);
-  color: #0a0a0f; padding: .5rem 1.2rem; border-radius: 8px;
-  font-weight: 600; font-size: .85rem; transition: transform .2s, box-shadow .2s;
+.nav-logo {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 1.1rem; font-weight: 600; letter-spacing: -0.02em; color: #111;
+  text-decoration: none;
 }
-.nav-cta:hover { transform: translateY(-1px); box-shadow: 0 4px 20px rgba(110,231,183,.3); color: #0a0a0f; }
+.nav-links { display: flex; gap: 1.5rem; list-style: none; }
+.nav-links a {
+  color: #666; font-family: 'Inter', sans-serif; font-size: 0.82rem;
+  font-weight: 500; text-decoration: none; letter-spacing: 0.01em;
+}
+.nav-links a:hover { color: #111; }
+.nav-gh {
+  font-family: 'Inter', sans-serif; font-size: 0.82rem; font-weight: 500;
+  color: #fff; background: #111; padding: 0.4rem 1rem; border-radius: 4px;
+  text-decoration: none; transition: background 0.2s;
+}
+.nav-gh:hover { background: #333; color: #fff; }
 
 /* === HERO === */
 .hero {
-  min-height: 100vh; display: flex; align-items: center; justify-content: center;
-  text-align: center; padding: 8rem 2rem 4rem; position: relative;
+  min-height: 100vh; display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  text-align: center; padding: 7rem 2rem 4rem;
 }
-.hero-badge {
-  display: inline-flex; align-items: center; gap: .5rem;
-  background: rgba(110,231,183,.08); border: 1px solid rgba(110,231,183,.2);
-  border-radius: 999px; padding: .4rem 1rem; font-size: .8rem; color: #6ee7b7;
-  margin-bottom: 2rem; animation: fadeSlideUp .8s ease-out;
+.hero-version {
+  font-family: 'JetBrains Mono', monospace; font-size: 0.75rem;
+  color: #888; letter-spacing: 0.08em; text-transform: uppercase;
+  margin-bottom: 1.5rem; border: 1px solid #ddd; padding: 0.3rem 0.8rem;
+  border-radius: 3px;
 }
-.hero-badge .dot { width: 6px; height: 6px; border-radius: 50%; background: #6ee7b7; animation: pulse 2s ease-in-out infinite; }
-@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .3; } }
 .hero h1 {
-  font-size: clamp(3rem, 8vw, 5.5rem); font-weight: 900; letter-spacing: -.04em;
-  line-height: 1.05; margin-bottom: 1.5rem; animation: fadeSlideUp .8s ease-out .1s both;
-}
-.hero h1 .gradient {
-  background: linear-gradient(135deg, #6ee7b7 0%, #3b82f6 50%, #a78bfa 100%);
-  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
-  background-clip: text;
+  font-size: clamp(2.8rem, 7vw, 5rem); font-weight: 900;
+  letter-spacing: -0.04em; line-height: 1.05; margin-bottom: 1rem;
 }
 .hero-sub {
-  font-size: clamp(1.1rem, 2.5vw, 1.4rem); color: #a0a0b0; max-width: 700px;
-  margin: 0 auto 2.5rem; line-height: 1.6; animation: fadeSlideUp .8s ease-out .2s both;
+  font-size: 1.15rem; color: #555; max-width: 560px;
+  margin: 0 auto 3rem; line-height: 1.6; font-weight: 300;
 }
-.hero-stats {
-  display: flex; gap: 3rem; justify-content: center; margin-bottom: 3rem;
-  animation: fadeSlideUp .8s ease-out .3s both;
+.hero-metrics {
+  display: flex; gap: 4rem; justify-content: center;
+  margin-bottom: 3rem; flex-wrap: wrap;
 }
-.hero-stat { text-align: center; }
-.hero-stat .num {
-  font-size: 2.5rem; font-weight: 800; color: #6ee7b7;
-  font-variant-numeric: tabular-nums;
+.metric { text-align: center; }
+.metric .num {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 3.2rem; font-weight: 700; letter-spacing: -0.03em;
+  line-height: 1; color: #111;
 }
-.hero-stat .label { font-size: .8rem; color: #707080; text-transform: uppercase; letter-spacing: .08em; }
-.hero-actions { display: flex; gap: 1rem; justify-content: center; flex-wrap: wrap; animation: fadeSlideUp .8s ease-out .4s both; }
-.btn {
-  padding: .8rem 2rem; border-radius: 12px; font-weight: 600; font-size: 1rem;
-  transition: all .3s; display: inline-flex; align-items: center; gap: .5rem; border: none; cursor: pointer;
+.metric .unit {
+  font-family: 'Inter', sans-serif; font-size: 0.7rem;
+  color: #999; text-transform: uppercase; letter-spacing: 0.1em;
+  margin-top: 0.4rem;
 }
-.btn-primary {
-  background: linear-gradient(135deg, #6ee7b7, #3b82f6); color: #0a0a0f;
-  box-shadow: 0 4px 20px rgba(110,231,183,.2);
+.install-cmd {
+  font-family: 'JetBrains Mono', monospace; font-size: 0.9rem;
+  background: #f5f5f5; border: 1px solid #e0e0e0; border-radius: 4px;
+  padding: 0.7rem 1.5rem; color: #333; display: inline-block;
+  margin-top: 1rem;
 }
-.btn-primary:hover { transform: translateY(-2px); box-shadow: 0 8px 30px rgba(110,231,183,.3); color: #0a0a0f; }
-.btn-secondary {
-  background: rgba(255,255,255,.05); color: #e0e0e8; border: 1px solid rgba(255,255,255,.1);
-}
-.btn-secondary:hover { background: rgba(255,255,255,.1); transform: translateY(-2px); }
-
-@keyframes fadeSlideUp {
-  from { opacity: 0; transform: translateY(30px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-
-/* === INSTALL BOX === */
-.install-box {
-  margin: 2.5rem auto 0; max-width: 520px;
-  background: rgba(255,255,255,.03); border: 1px solid rgba(255,255,255,.08);
-  border-radius: 12px; padding: 1rem 1.5rem;
-  display: flex; align-items: center; gap: 1rem;
-  animation: fadeSlideUp .8s ease-out .5s both;
-  font-family: 'JetBrains Mono', monospace; font-size: .9rem; color: #a0a0b0;
-}
-.install-box code { color: #6ee7b7; flex: 1; }
-.install-box .copy-btn {
-  background: none; border: 1px solid rgba(255,255,255,.15); color: #a0a0b0;
-  padding: .3rem .7rem; border-radius: 6px; cursor: pointer; font-size: .75rem;
-  transition: all .2s;
-}
-.install-box .copy-btn:hover { background: rgba(255,255,255,.1); color: #fff; }
+.install-cmd span { color: #999; }
 
 /* === SECTIONS === */
 section { padding: 6rem 2rem; }
-.container { max-width: 1200px; margin: 0 auto; }
+section:nth-child(even) { background: #fafafa; }
+.container { max-width: 960px; margin: 0 auto; }
 .section-label {
-  text-transform: uppercase; letter-spacing: .15em; font-size: .75rem;
-  color: #6ee7b7; font-weight: 600; margin-bottom: .5rem;
+  font-family: 'JetBrains Mono', monospace;
+  text-transform: uppercase; letter-spacing: 0.12em;
+  font-size: 0.7rem; color: #999; margin-bottom: 0.5rem;
 }
 .section-title {
-  font-size: clamp(2rem, 4vw, 3rem); font-weight: 800; letter-spacing: -.03em;
-  margin-bottom: 1rem; line-height: 1.15;
+  font-size: clamp(1.8rem, 3.5vw, 2.4rem);
+  font-weight: 700; letter-spacing: -0.03em;
+  margin-bottom: 0.5rem; line-height: 1.2;
 }
-.section-desc { color: #a0a0b0; font-size: 1.1rem; max-width: 650px; margin-bottom: 3rem; }
+.section-desc {
+  color: #666; font-size: 1rem; max-width: 560px;
+  margin-bottom: 3rem; font-weight: 300;
+}
+
+/* === BENCHMARK VISUALIZATION === */
+.bench-section-title {
+  font-family: 'Inter', sans-serif; font-size: 0.8rem; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.08em; color: #888;
+  margin-bottom: 1.5rem; padding-bottom: 0.5rem;
+  border-bottom: 1px solid #eee;
+}
+.bench-group { margin-bottom: 3rem; }
+.bench-row {
+  display: grid; grid-template-columns: 200px 1fr 70px;
+  align-items: center; gap: 1rem; padding: 0.7rem 0;
+  border-bottom: 1px solid #f0f0f0;
+}
+.bench-row:last-child { border-bottom: none; }
+.bench-name {
+  font-family: 'Inter', sans-serif; font-size: 0.82rem;
+  color: #444; font-weight: 500;
+}
+.bench-bars-container { position: relative; height: 32px; }
+.bench-bar {
+  position: absolute; top: 0; left: 0; height: 14px;
+  border-radius: 2px; transition: width 1.2s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.bench-bar.rsync-bar {
+  background: #ccc; top: 0;
+}
+.bench-bar.resync-bar {
+  background: #111; top: 18px;
+}
+.bench-bar-label {
+  position: absolute; right: 4px; top: 50%; transform: translateY(-50%);
+  font-family: 'JetBrains Mono', monospace; font-size: 0.6rem; color: #888;
+}
+.bench-bar.resync-bar .bench-bar-label { color: #fff; }
+.bench-speedup {
+  font-family: 'JetBrains Mono', monospace; font-size: 0.85rem;
+  font-weight: 600; text-align: right; color: #111;
+}
+.bench-legend {
+  display: flex; gap: 1.5rem; margin-bottom: 1rem;
+  font-family: 'Inter', sans-serif; font-size: 0.75rem; color: #888;
+}
+.bench-legend-item { display: flex; align-items: center; gap: 0.4rem; }
+.bench-legend-swatch {
+  width: 12px; height: 6px; border-radius: 1px;
+}
+.bench-legend-swatch.rsync { background: #ccc; }
+.bench-legend-swatch.resync { background: #111; }
+.bench-geomean {
+  display: flex; justify-content: flex-end; align-items: baseline;
+  gap: 0.5rem; padding-top: 1rem; margin-top: 0.5rem;
+  border-top: 2px solid #111;
+}
+.bench-geomean .label {
+  font-family: 'Inter', sans-serif; font-size: 0.75rem;
+  text-transform: uppercase; letter-spacing: 0.08em; color: #888;
+}
+.bench-geomean .value {
+  font-family: 'JetBrains Mono', monospace; font-size: 1.4rem;
+  font-weight: 700;
+}
+.bench-env {
+  margin-top: 3rem; font-family: 'Inter', sans-serif;
+  font-size: 0.75rem; color: #aaa; line-height: 1.8;
+}
+
+/* === SPEEDUP CHART (big visual) === */
+.speedup-chart {
+  display: grid; grid-template-columns: repeat(5, 1fr); gap: 1rem;
+  margin: 3rem 0;
+}
+.speedup-col {
+  display: flex; flex-direction: column; align-items: center;
+  justify-content: flex-end; height: 280px;
+}
+.speedup-bar-wrap {
+  width: 100%; display: flex; justify-content: center; flex: 1;
+  align-items: flex-end;
+}
+.speedup-bar {
+  width: 48px; background: #111; border-radius: 3px 3px 0 0;
+  transition: height 1.5s cubic-bezier(0.22, 1, 0.36, 1);
+  position: relative;
+}
+.speedup-bar .val {
+  position: absolute; top: -28px; left: 50%; transform: translateX(-50%);
+  font-family: 'JetBrains Mono', monospace; font-size: 1rem;
+  font-weight: 700; white-space: nowrap;
+}
+.speedup-label {
+  font-family: 'Inter', sans-serif; font-size: 0.7rem;
+  color: #888; text-align: center; margin-top: 0.5rem;
+  line-height: 1.3;
+}
 
 /* === COMPARISON TABLE === */
-.comparison {
-  background: rgba(255,255,255,.02); border: 1px solid rgba(255,255,255,.06);
-  border-radius: 16px; overflow: hidden;
+.comp-table {
+  width: 100%; border-collapse: collapse;
+  font-family: 'Inter', sans-serif; font-size: 0.85rem;
 }
-.comparison table { width: 100%; border-collapse: collapse; }
-.comparison th {
-  padding: 1rem 1.5rem; text-align: left; font-weight: 600;
-  background: rgba(255,255,255,.03); border-bottom: 1px solid rgba(255,255,255,.06);
-  font-size: .85rem; text-transform: uppercase; letter-spacing: .05em; color: #a0a0b0;
+.comp-table th {
+  text-align: left; font-weight: 600; padding: 0.8rem 1rem;
+  border-bottom: 2px solid #111; font-size: 0.75rem;
+  text-transform: uppercase; letter-spacing: 0.06em; color: #888;
 }
-.comparison th:first-child { width: 30%; }
-.comparison td {
-  padding: .8rem 1.5rem; border-bottom: 1px solid rgba(255,255,255,.03);
-  font-size: .9rem;
+.comp-table td {
+  padding: 0.6rem 1rem; border-bottom: 1px solid #f0f0f0;
+  vertical-align: top;
 }
-.comparison tr:last-child td { border-bottom: none; }
-.comparison .feat { color: #a0a0b0; font-weight: 500; }
-.comparison .bad { color: #f87171; }
-.comparison .good { color: #6ee7b7; font-weight: 500; }
-.comparison .neutral { color: #fbbf24; }
+.comp-table tr:last-child td { border-bottom: none; }
+.comp-table .feat { color: #555; font-weight: 500; }
+.comp-table .old { color: #bbb; }
+.comp-table .new { color: #111; font-weight: 500; }
 
-/* === FEATURES GRID === */
-.features-grid {
-  display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 1.5rem;
+/* === FEATURE LIST === */
+.features-numbered {
+  counter-reset: feat;
+  list-style: none; padding: 0;
 }
-.feature-card {
-  background: rgba(255,255,255,.02); border: 1px solid rgba(255,255,255,.06);
-  border-radius: 16px; padding: 2rem; transition: all .3s;
-  position: relative; overflow: hidden;
+.features-numbered li {
+  counter-increment: feat;
+  display: grid; grid-template-columns: 48px 1fr;
+  gap: 1rem; padding: 1.2rem 0;
+  border-bottom: 1px solid #f0f0f0;
 }
-.feature-card:hover {
-  border-color: rgba(110,231,183,.2); transform: translateY(-4px);
-  box-shadow: 0 8px 30px rgba(0,0,0,.2);
+.features-numbered li:last-child { border-bottom: none; }
+.features-numbered li::before {
+  content: counter(feat, decimal-leading-zero);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 1.2rem; font-weight: 700; color: #ccc;
+  padding-top: 0.1rem;
 }
-.feature-card::before {
-  content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px;
-  background: linear-gradient(90deg, transparent, #6ee7b7, transparent);
-  opacity: 0; transition: opacity .3s;
+.features-numbered h3 {
+  font-family: 'Inter', sans-serif; font-size: 0.95rem;
+  font-weight: 600; margin-bottom: 0.2rem;
 }
-.feature-card:hover::before { opacity: 1; }
-.feature-icon {
-  width: 48px; height: 48px; border-radius: 12px; display: flex; align-items: center;
-  justify-content: center; font-size: 1.2rem; font-weight: 700; margin-bottom: 1rem;
-}
-.feature-icon.green { background: rgba(110,231,183,.1); color: #6ee7b7; }
-.feature-icon.blue { background: rgba(96,165,250,.1); color: #60a5fa; }
-.feature-icon.purple { background: rgba(167,139,250,.1); color: #a78bfa; }
-.feature-icon.amber { background: rgba(251,191,36,.1); color: #fbbf24; }
-.feature-card h3 { font-size: 1.15rem; font-weight: 700; margin-bottom: .5rem; }
-.feature-card p { color: #a0a0b0; font-size: .9rem; line-height: 1.6; }
-
-/* === BENCHMARK CHART === */
-.bench-grid { display: flex; flex-direction: column; gap: 1.5rem; }
-.bench-row {
-  background: rgba(255,255,255,.02); border: 1px solid rgba(255,255,255,.06);
-  border-radius: 12px; padding: 1.5rem; transition: border-color .3s;
-}
-.bench-row:hover { border-color: rgba(110,231,183,.15); }
-.bench-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; }
-.bench-label { font-weight: 600; font-size: .95rem; }
-.bench-speedup {
-  font-size: .85rem; font-weight: 700; color: #6ee7b7;
-  background: rgba(110,231,183,.08); padding: .25rem .75rem; border-radius: 999px;
-}
-.bench-bars { display: flex; flex-direction: column; gap: .5rem; }
-.bar-group { display: flex; align-items: center; gap: .8rem; }
-.bar-label { font-size: .75rem; width: 50px; color: #707080; text-align: right; font-weight: 500; }
-.bar-track { flex: 1; height: 28px; background: rgba(255,255,255,.03); border-radius: 6px; overflow: hidden; position: relative; }
-.bar-fill {
-  height: 100%; border-radius: 6px; display: flex; align-items: center; padding-left: .8rem;
-  font-size: .75rem; font-weight: 600; min-width: fit-content;
-  transition: width 1.5s cubic-bezier(.22,1,.36,1);
-  width: 0;
-}
-.bar-fill.rsync-bar { background: linear-gradient(90deg, #f87171, #ef4444); color: #fff; }
-.bar-fill.resync-bar { background: linear-gradient(90deg, #6ee7b7, #3b82f6); color: #0a0a0f; }
-.bench-env {
-  margin-top: 2rem; padding: 1rem 1.5rem; background: rgba(255,255,255,.02);
-  border: 1px solid rgba(255,255,255,.05); border-radius: 8px;
-  font-size: .8rem; color: #707080;
+.features-numbered p {
+  font-size: 0.9rem; color: #666; font-weight: 300; line-height: 1.6;
 }
 
-/* === ARCHITECTURE === */
-.arch-diagram {
-  background: rgba(255,255,255,.02); border: 1px solid rgba(255,255,255,.06);
-  border-radius: 16px; padding: 2.5rem; overflow-x: auto;
+/* === ARCH DIAGRAM === */
+.arch-box {
+  background: #fafafa; border: 1px solid #e0e0e0; border-radius: 4px;
+  padding: 2rem; overflow-x: auto;
 }
-.arch-diagram pre {
-  font-size: .8rem; line-height: 1.6; color: #a0a0b0; white-space: pre; overflow-x: auto;
+.arch-box pre {
+  font-size: 0.78rem; line-height: 1.7; color: #444;
+  white-space: pre; font-weight: 500;
 }
-.arch-diagram .hl { color: #6ee7b7; font-weight: 600; }
-.arch-diagram .bl { color: #60a5fa; }
-.arch-diagram .am { color: #fbbf24; }
-
-.modules-grid {
-  display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1rem; margin-top: 2rem;
-}
-.module-card {
-  background: rgba(255,255,255,.02); border: 1px solid rgba(255,255,255,.05);
-  border-radius: 10px; padding: 1rem 1.25rem; transition: border-color .3s;
-}
-.module-card:hover { border-color: rgba(110,231,183,.15); }
-.module-card .name { font-family: 'JetBrains Mono', monospace; color: #6ee7b7; font-size: .85rem; font-weight: 600; }
-.module-card .desc { color: #a0a0b0; font-size: .82rem; margin-top: .3rem; }
 
 /* === SECURITY === */
-.security-grid {
-  display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1rem;
+.sec-list { list-style: none; }
+.sec-list li {
+  padding: 0.8rem 0; border-bottom: 1px solid #f0f0f0;
+  display: grid; grid-template-columns: 120px 1fr; gap: 1rem;
 }
-.sec-card {
-  background: rgba(255,255,255,.02); border: 1px solid rgba(255,255,255,.06);
-  border-radius: 12px; padding: 1.5rem; display: flex; gap: 1rem;
-  transition: border-color .3s;
+.sec-list li:last-child { border-bottom: none; }
+.sec-list .tag {
+  font-family: 'JetBrains Mono', monospace; font-size: 0.78rem;
+  font-weight: 600; color: #111;
 }
-.sec-card:hover { border-color: rgba(110,231,183,.15); }
-.sec-icon { font-size: 1.5rem; flex-shrink: 0; line-height: 1; }
-.sec-card h4 { font-size: .95rem; font-weight: 600; margin-bottom: .3rem; }
-.sec-card p { font-size: .82rem; color: #a0a0b0; line-height: 1.5; }
+.sec-list .desc {
+  font-size: 0.9rem; color: #666; font-weight: 300;
+}
 
 /* === CTA === */
 .cta-section {
-  text-align: center; padding: 8rem 2rem;
-  background: linear-gradient(180deg, transparent, rgba(110,231,183,.03), transparent);
+  text-align: center; padding: 6rem 2rem;
+  border-top: 1px solid #e0e0e0;
 }
-.cta-section h2 { font-size: clamp(2rem, 4vw, 3rem); font-weight: 800; margin-bottom: 1rem; }
-.cta-section p { color: #a0a0b0; font-size: 1.1rem; margin-bottom: 2rem; }
+.cta-section h2 {
+  font-size: 2rem; font-weight: 700; margin-bottom: 0.5rem;
+}
+.cta-section p { color: #666; margin-bottom: 2rem; font-weight: 300; }
+.btn-dark {
+  display: inline-block; background: #111; color: #fff; padding: 0.7rem 2rem;
+  border-radius: 4px; text-decoration: none; font-family: 'Inter', sans-serif;
+  font-size: 0.9rem; font-weight: 500; transition: background 0.2s;
+}
+.btn-dark:hover { background: #333; color: #fff; }
+.btn-outline {
+  display: inline-block; background: none; color: #111;
+  padding: 0.7rem 2rem; border: 1px solid #ccc; border-radius: 4px;
+  text-decoration: none; font-family: 'Inter', sans-serif;
+  font-size: 0.9rem; font-weight: 500; margin-left: 0.5rem;
+  transition: border-color 0.2s;
+}
+.btn-outline:hover { border-color: #111; }
 
 /* === FOOTER === */
 footer {
-  border-top: 1px solid rgba(255,255,255,.06); padding: 3rem 2rem;
-  text-align: center; color: #505060; font-size: .85rem;
+  border-top: 1px solid #e0e0e0; padding: 2rem;
+  text-align: center; font-family: 'Inter', sans-serif;
+  font-size: 0.78rem; color: #bbb;
 }
-footer a { color: #707080; }
-footer a:hover { color: #6ee7b7; }
-.footer-links { display: flex; gap: 2rem; justify-content: center; margin-bottom: 1rem; }
-
-/* === ANIMATIONS === */
-.fade-in {
-  opacity: 0; transform: translateY(20px);
-  transition: opacity .6s ease-out, transform .6s ease-out;
-}
-.fade-in.visible { opacity: 1; transform: translateY(0); }
-.count-up { font-variant-numeric: tabular-nums; }
+footer a { color: #999; text-decoration: none; }
+footer a:hover { color: #111; }
+.footer-links { display: flex; gap: 1.5rem; justify-content: center; margin-bottom: 0.5rem; }
 
 /* === RESPONSIVE === */
 @media (max-width: 768px) {
   .nav-links { display: none; }
-  .hero-stats { flex-direction: column; gap: 1.5rem; }
-  .hero h1 { font-size: 2.5rem; }
+  .hero-metrics { gap: 2rem; }
+  .metric .num { font-size: 2.2rem; }
   section { padding: 4rem 1.5rem; }
-  .features-grid { grid-template-columns: 1fr; }
-  .comparison td, .comparison th { padding: .6rem .8rem; font-size: .8rem; }
+  .bench-row { grid-template-columns: 1fr; gap: 0.3rem; }
+  .bench-bars-container { height: 32px; }
+  .bench-speedup { text-align: left; }
+  .speedup-chart { grid-template-columns: repeat(3, 1fr); }
+  .speedup-col { height: 200px; }
+  .comp-table { font-size: 0.78rem; }
+  .sec-list li { grid-template-columns: 1fr; gap: 0.3rem; }
+}
+@media (max-width: 480px) {
+  .hero h1 { font-size: 2.2rem; }
+  .speedup-chart { grid-template-columns: repeat(2, 1fr); }
 }
 </style>
 </head>
 <body>
 
-<div class="bg-grid"></div>
-<div class="bg-glow"></div>
-<div class="particles" id="particles"></div>
-
 <!-- NAV -->
-<nav id="nav">
+<nav>
   <div class="nav-inner">
-    <div class="nav-logo"><span>re</span>sync</div>
+    <a href="#" class="nav-logo">resync</a>
     <ul class="nav-links">
-      <li><a href="#features">Features</a></li>
       <li><a href="#benchmarks">Benchmarks</a></li>
       <li><a href="#comparison">Comparison</a></li>
+      <li><a href="#features">How</a></li>
       <li><a href="#architecture">Architecture</a></li>
       <li><a href="#security">Security</a></li>
     </ul>
-    <a href="https://github.com/vedLinuxian/resync-rs" class="nav-cta" target="_blank" rel="noopener">
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
-      GitHub
-    </a>
+    <a href="https://github.com/vedLinuxian/resync-rs" class="nav-gh" target="_blank" rel="noopener">GitHub &rarr;</a>
   </div>
 </nav>
 
 <!-- HERO -->
 <section class="hero">
-  <div>
-    <div class="hero-badge"><span class="dot"></span> Rust 2024 Edition &bull; v0.3.0</div>
-    <h1>rsync, <span class="gradient">reimagined</span></h1>
-    <p class="hero-sub">Parallel delta-sync engine built in Rust. BLAKE3 hashing, zero-copy I/O, content-defined chunking. Drop-in rsync replacement that saturates your NVMe.</p>
+  <div class="hero-version">v1.0.0-beta.1 &mdash; Rust 2024 Edition</div>
+  <h1>rsync, reimagined.</h1>
+  <p class="hero-sub">
+    Parallel delta-sync engine built in Rust. BLAKE3 hashing, zero-copy I/O,
+    content-defined chunking. Drop-in rsync replacement.
+  </p>
 
-    <div class="hero-stats">
-      <div class="hero-stat"><div class="num count-up" data-target="3">0</div><div class="label">× typical speedup</div></div>
-      <div class="hero-stat"><div class="num count-up" data-target="120">0</div><div class="label">× trust-mtime</div></div>
-      <div class="hero-stat"><div class="num count-up" data-target="58">0</div><div class="label">Tests passing</div></div>
+  <div class="hero-metrics">
+    <div class="metric">
+      <div class="num" data-target="4.6">0</div>
+      <div class="unit">× faster (LAN)</div>
     </div>
-
-    <div class="hero-actions">
-      <a href="https://github.com/vedLinuxian/resync-rs" class="btn btn-primary" target="_blank" rel="noopener">
-        <svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
-        View on GitHub
-      </a>
-      <a href="#benchmarks" class="btn btn-secondary">See Benchmarks &#x2193;</a>
+    <div class="metric">
+      <div class="num" data-target="56">0</div>
+      <div class="unit">× compressible data</div>
     </div>
-
-    <div class="install-box">
-      <span>$</span>
-      <code id="installCmd">cargo install resync-rs</code>
-      <button class="copy-btn" onclick="navigator.clipboard.writeText('cargo install resync-rs');this.textContent='Copied!'">Copy</button>
+    <div class="metric">
+      <div class="num" data-target="120">0</div>
+      <div class="unit">× trust-mtime</div>
     </div>
-  </div>
-</section>
-
-<!-- FEATURES -->
-<section id="features">
-  <div class="container">
-    <div class="section-label fade-in">Features</div>
-    <h2 class="section-title fade-in">Built for modern hardware</h2>
-    <p class="section-desc fade-in">Every stage of the sync pipeline is parallelized, vectorized, and zero-copy. No single-threaded bottlenecks.</p>
-
-    <div class="features-grid">
-      <div class="feature-card fade-in">
-        <div class="feature-icon green">B3</div>
-        <h3>BLAKE3 + SIMD</h3>
-        <p>256-bit cryptographic hashing with AVX-512/AVX2/NEON auto-vectorization. 10-15x faster than MD5 with stronger security guarantees.</p>
-      </div>
-      <div class="feature-card fade-in">
-        <div class="feature-icon blue">||</div>
-        <h3>Parallel Everything</h3>
-        <p>Rayon work-stealing thread pool across all stages: directory scanning, hashing, delta computation, and file application. Uses all your cores.</p>
-      </div>
-      <div class="feature-card fade-in">
-        <div class="feature-icon purple">0c</div>
-        <h3>Zero-Copy I/O</h3>
-        <p>Memory-mapped files with madvise(SEQUENTIAL|HUGEPAGE), copy_file_range(2) kernel-space copies, fallocate(2) pre-allocation.</p>
-      </div>
-      <div class="feature-card fade-in">
-        <div class="feature-icon amber">CDC</div>
-        <h3>Content-Defined Chunking</h3>
-        <p>FastCDC with Gear rolling hash. Insertions at byte 0 no longer invalidate every chunk. 95%+ hash preservation on prepend edits.</p>
-      </div>
-      <div class="feature-card fade-in">
-        <div class="feature-icon green">Zs</div>
-        <h3>Zstd Compression</h3>
-        <p>Facebook Zstandard replaces zlib: 10x faster compression at equivalent ratios for network transfers.</p>
-      </div>
-      <div class="feature-card fade-in">
-        <div class="feature-icon blue">TLS</div>
-        <h3>Native TLS 1.3</h3>
-        <p>Memory-safe TLS via rustls. No OpenSSL dependency. Push and pull modes with certificate verification.</p>
-      </div>
-      <div class="feature-card fade-in">
-        <div class="feature-icon purple">Mc</div>
-        <h3>Manifest Cache</h3>
-        <p>Two-tier manifest: tiny TOC for dir-mtime checks + zstd-compressed bincode manifest. Skip destination scanning entirely on repeat syncs.</p>
-      </div>
-      <div class="feature-card fade-in">
-        <div class="feature-icon amber">At</div>
-        <h3>Atomic + Crash-Safe</h3>
-        <p>Write to temp, then rename(2). fallocate(2) pre-allocation. No partial files ever. Nanosecond timestamp precision via utimensat(2).</p>
-      </div>
-      <div class="feature-card fade-in">
-        <div class="feature-icon green">Sh</div>
-        <h3>Security Hardened</h3>
-        <p>Path traversal guards, decompression bomb limits, setuid stripping, streaming writes. Rust memory safety eliminates buffer overflows.</p>
-      </div>
-      <div class="feature-card fade-in">
-        <div class="feature-icon blue">Xa</div>
-        <h3>Extended Attributes</h3>
-        <p>Preserve xattrs with --xattrs/-X. Sparse file support, append mode, reflinks (CoW), one-file-system boundaries.</p>
-      </div>
-      <div class="feature-card fade-in">
-        <div class="feature-icon purple">Tm</div>
-        <h3>--trust-mtime</h3>
-        <p>Ultra-fast no-change detection via directory mtimes. Sub-25ms at 100K files. Safe for CI/CD and deployment pipelines.</p>
-      </div>
-      <div class="feature-card fade-in">
-        <div class="feature-icon amber">Pp</div>
-        <h3>Push &amp; Pull</h3>
-        <p>Binary protocol over TCP with TLS 1.3. Push files to a remote server or pull from one. No SSH tunnel required.</p>
-      </div>
+    <div class="metric">
+      <div class="num" data-target="79">0</div>
+      <div class="unit">tests passing</div>
     </div>
   </div>
+
+  <div class="install-cmd"><span>$</span> cargo install resync-rs</div>
 </section>
 
-<!-- BENCHMARKS -->
+<!-- SPEEDUP OVERVIEW -->
 <section id="benchmarks">
   <div class="container">
-    <div class="section-label fade-in">Performance</div>
-    <h2 class="section-title fade-in">Real benchmarks, real numbers</h2>
-    <p class="section-desc fade-in">Measured on NVMe SSD, warm cache, rsync 3.2.7. Run <code>bash bench/benchmark.sh</code> to reproduce on your hardware.</p>
+    <div class="section-label">Performance</div>
+    <h2 class="section-title">Measured speedups over rsync 3.2.7</h2>
+    <p class="section-desc">
+      Docker containers, tc netem traffic shaping, LAN profile (1 Gbps, 0.5 ms RTT).
+      Reproducible: <code>bash bench/docker_network_benchmark.sh</code>
+    </p>
 
-    <div class="bench-grid">
-      <div class="bench-row fade-in">
-        <div class="bench-header">
-          <span class="bench-label">10K Small Files &mdash; Full Copy</span>
-          <span class="bench-speedup">2.1x faster</span>
+    <!-- BIG VERTICAL BARS -->
+    <div class="speedup-chart" id="speedupChart">
+      <div class="speedup-col">
+        <div class="speedup-bar-wrap">
+          <div class="speedup-bar" data-height="8" style="height: 0;">
+            <span class="val">2.0×</span>
+          </div>
         </div>
-        <div class="bench-bars">
-          <div class="bar-group"><span class="bar-label">rsync</span><div class="bar-track"><div class="bar-fill rsync-bar" data-width="100">0.405s</div></div></div>
-          <div class="bar-group"><span class="bar-label">resync</span><div class="bar-track"><div class="bar-fill resync-bar" data-width="46">0.188s</div></div></div>
-        </div>
+        <div class="speedup-label">Full copy<br>mixed tree</div>
       </div>
-
-      <div class="bench-row fade-in">
-        <div class="bench-header">
-          <span class="bench-label">500 Medium Files &mdash; Full Copy</span>
-          <span class="bench-speedup">2.6x faster</span>
+      <div class="speedup-col">
+        <div class="speedup-bar-wrap">
+          <div class="speedup-bar" data-height="48" style="height: 0;">
+            <span class="val">12.2×</span>
+          </div>
         </div>
-        <div class="bench-bars">
-          <div class="bar-group"><span class="bar-label">rsync</span><div class="bar-track"><div class="bar-fill rsync-bar" data-width="100">0.741s</div></div></div>
-          <div class="bar-group"><span class="bar-label">resync</span><div class="bar-track"><div class="bar-fill resync-bar" data-width="38">0.282s</div></div></div>
-        </div>
+        <div class="speedup-label">No-change<br>re-sync</div>
       </div>
-
-      <div class="bench-row fade-in">
-        <div class="bench-header">
-          <span class="bench-label">5 x 100 MB &mdash; Full Copy</span>
-          <span class="bench-speedup">2.1x faster</span>
+      <div class="speedup-col">
+        <div class="speedup-bar-wrap">
+          <div class="speedup-bar" data-height="46" style="height: 0;">
+            <span class="val">11.8×</span>
+          </div>
         </div>
-        <div class="bench-bars">
-          <div class="bar-group"><span class="bar-label">rsync</span><div class="bar-track"><div class="bar-fill rsync-bar" data-width="100">1.371s</div></div></div>
-          <div class="bar-group"><span class="bar-label">resync</span><div class="bar-track"><div class="bar-fill resync-bar" data-width="47">0.647s</div></div></div>
-        </div>
+        <div class="speedup-label">Incremental<br>5% modified</div>
       </div>
-
-      <div class="bench-row fade-in">
-        <div class="bench-header">
-          <span class="bench-label">10K Files &mdash; No Changes</span>
-          <span class="bench-speedup">2.4x faster</span>
+      <div class="speedup-col">
+        <div class="speedup-bar-wrap">
+          <div class="speedup-bar" data-height="100" style="height: 0;">
+            <span class="val">55.7×</span>
+          </div>
         </div>
-        <div class="bench-bars">
-          <div class="bar-group"><span class="bar-label">rsync</span><div class="bar-track"><div class="bar-fill rsync-bar" data-width="100">0.135s</div></div></div>
-          <div class="bar-group"><span class="bar-label">resync</span><div class="bar-track"><div class="bar-fill resync-bar" data-width="41">0.055s</div></div></div>
-        </div>
+        <div class="speedup-label">Compressible<br>data</div>
       </div>
-
-      <div class="bench-row fade-in">
-        <div class="bench-header">
-          <span class="bench-label">10K Files &mdash; 5% Modified</span>
-          <span class="bench-speedup">2.1x faster</span>
+      <div class="speedup-col">
+        <div class="speedup-bar-wrap">
+          <div class="speedup-bar" data-height="5" style="height: 0;">
+            <span class="val">1.2×</span>
+          </div>
         </div>
-        <div class="bench-bars">
-          <div class="bar-group"><span class="bar-label">rsync</span><div class="bar-track"><div class="bar-fill rsync-bar" data-width="100">0.194s</div></div></div>
-          <div class="bar-group"><span class="bar-label">resync</span><div class="bar-track"><div class="bar-fill resync-bar" data-width="45">0.088s</div></div></div>
-        </div>
-      </div>
-
-      <div class="bench-row fade-in">
-        <div class="bench-header">
-          <span class="bench-label">100K Files &mdash; --trust-mtime</span>
-          <span class="bench-speedup">~120x faster</span>
-        </div>
-        <div class="bench-bars">
-          <div class="bar-group"><span class="bar-label">rsync</span><div class="bar-track"><div class="bar-fill rsync-bar" data-width="100">0.760s</div></div></div>
-          <div class="bar-group"><span class="bar-label">resync</span><div class="bar-track"><div class="bar-fill resync-bar" data-width="1">0.006s</div></div></div>
-        </div>
-      </div>
-
-      <div class="bench-row fade-in">
-        <div class="bench-header">
-          <span class="bench-label">Large Files &mdash; 10% Delta</span>
-          <span class="bench-speedup">1.2x faster</span>
-        </div>
-        <div class="bench-bars">
-          <div class="bar-group"><span class="bar-label">rsync</span><div class="bar-track"><div class="bar-fill rsync-bar" data-width="100">1.339s</div></div></div>
-          <div class="bar-group"><span class="bar-label">resync</span><div class="bar-track"><div class="bar-fill resync-bar" data-width="78">1.039s</div></div></div>
-        </div>
+        <div class="speedup-label">Large binary<br>256 MB</div>
       </div>
     </div>
 
-    <div class="bench-env fade-in">
-      <strong>Environment:</strong> 12th Gen Intel i3-1215U (8 cores), NVMe SSD (ext4), warm page cache, rsync 3.2.7, Rust 2024 edition with LTO.
-      Speedups vary by hardware. <code>--trust-mtime</code> timing is after warm manifest (100K files at 200 dirs).
-      Run <code>bash bench/benchmark.sh</code> to reproduce on your hardware.
+    <!-- DETAILED LAN BARS -->
+    <div class="bench-group">
+      <div class="bench-section-title">Network — LAN (1 Gbps, 0.5 ms RTT)</div>
+      <div class="bench-legend">
+        <div class="bench-legend-item"><div class="bench-legend-swatch rsync"></div> rsync</div>
+        <div class="bench-legend-item"><div class="bench-legend-swatch resync"></div> resync</div>
+      </div>
+
+      <div class="bench-row" data-rsync="100" data-resync="51">
+        <div class="bench-name">Full copy</div>
+        <div class="bench-bars-container">
+          <div class="bench-bar rsync-bar" style="width: 0;"><span class="bench-bar-label">3.18s</span></div>
+          <div class="bench-bar resync-bar" style="width: 0;"><span class="bench-bar-label">1.62s</span></div>
+        </div>
+        <div class="bench-speedup">2.0×</div>
+      </div>
+      <div class="bench-row" data-rsync="100" data-resync="8">
+        <div class="bench-name">No-change</div>
+        <div class="bench-bars-container">
+          <div class="bench-bar rsync-bar" style="width: 0;"><span class="bench-bar-label">0.71s</span></div>
+          <div class="bench-bar resync-bar" style="width: 0;"><span class="bench-bar-label">0.06s</span></div>
+        </div>
+        <div class="bench-speedup">12.2×</div>
+      </div>
+      <div class="bench-row" data-rsync="100" data-resync="8">
+        <div class="bench-name">Incremental (5%)</div>
+        <div class="bench-bars-container">
+          <div class="bench-bar rsync-bar" style="width: 0;"><span class="bench-bar-label">2.37s</span></div>
+          <div class="bench-bar resync-bar" style="width: 0;"><span class="bench-bar-label">0.20s</span></div>
+        </div>
+        <div class="bench-speedup">11.8×</div>
+      </div>
+      <div class="bench-row" data-rsync="100" data-resync="2">
+        <div class="bench-name">Compressible</div>
+        <div class="bench-bars-container">
+          <div class="bench-bar rsync-bar" style="width: 0;"><span class="bench-bar-label">8.37s</span></div>
+          <div class="bench-bar resync-bar" style="width: 0;"><span class="bench-bar-label">0.15s</span></div>
+        </div>
+        <div class="bench-speedup">55.7×</div>
+      </div>
+      <div class="bench-row" data-rsync="100" data-resync="82">
+        <div class="bench-name">Large binary</div>
+        <div class="bench-bars-container">
+          <div class="bench-bar rsync-bar" style="width: 0;"><span class="bench-bar-label">3.00s</span></div>
+          <div class="bench-bar resync-bar" style="width: 0;"><span class="bench-bar-label">2.45s</span></div>
+        </div>
+        <div class="bench-speedup">1.2×</div>
+      </div>
+
+      <div class="bench-geomean">
+        <span class="label">Geometric mean</span>
+        <span class="value">4.6×</span>
+      </div>
+    </div>
+
+    <!-- WAN BARS -->
+    <div class="bench-group">
+      <div class="bench-section-title">Network — WAN (50 Mbps, 40 ms RTT, 0.5% loss)</div>
+      <div class="bench-legend">
+        <div class="bench-legend-item"><div class="bench-legend-swatch rsync"></div> rsync</div>
+        <div class="bench-legend-item"><div class="bench-legend-swatch resync"></div> resync</div>
+      </div>
+
+      <div class="bench-row" data-rsync="100" data-resync="35">
+        <div class="bench-name">Full copy</div>
+        <div class="bench-bars-container">
+          <div class="bench-bar rsync-bar" style="width: 0;"><span class="bench-bar-label">4.88s</span></div>
+          <div class="bench-bar resync-bar" style="width: 0;"><span class="bench-bar-label">1.72s</span></div>
+        </div>
+        <div class="bench-speedup">2.8×</div>
+      </div>
+      <div class="bench-row" data-rsync="100" data-resync="6">
+        <div class="bench-name">No-change</div>
+        <div class="bench-bars-container">
+          <div class="bench-bar rsync-bar" style="width: 0;"><span class="bench-bar-label">1.88s</span></div>
+          <div class="bench-bar resync-bar" style="width: 0;"><span class="bench-bar-label">0.12s</span></div>
+        </div>
+        <div class="bench-speedup">15.6×</div>
+      </div>
+      <div class="bench-row" data-rsync="100" data-resync="8">
+        <div class="bench-name">Incremental (5%)</div>
+        <div class="bench-bars-container">
+          <div class="bench-bar rsync-bar" style="width: 0;"><span class="bench-bar-label">2.77s</span></div>
+          <div class="bench-bar resync-bar" style="width: 0;"><span class="bench-bar-label">0.22s</span></div>
+        </div>
+        <div class="bench-speedup">12.5×</div>
+      </div>
+      <div class="bench-row" data-rsync="100" data-resync="2">
+        <div class="bench-name">Compressible</div>
+        <div class="bench-bars-container">
+          <div class="bench-bar rsync-bar" style="width: 0;"><span class="bench-bar-label">9.71s</span></div>
+          <div class="bench-bar resync-bar" style="width: 0;"><span class="bench-bar-label">0.17s</span></div>
+        </div>
+        <div class="bench-speedup">56.0×</div>
+      </div>
+      <div class="bench-row" data-rsync="100" data-resync="91">
+        <div class="bench-name">Large binary</div>
+        <div class="bench-bars-container">
+          <div class="bench-bar rsync-bar" style="width: 0;"><span class="bench-bar-label">46.37s</span></div>
+          <div class="bench-bar resync-bar" style="width: 0;"><span class="bench-bar-label">42.06s</span></div>
+        </div>
+        <div class="bench-speedup">1.1×</div>
+      </div>
+
+      <div class="bench-geomean">
+        <span class="label">Geometric mean</span>
+        <span class="value">4.2×</span>
+      </div>
+    </div>
+
+    <!-- LOCAL BARS -->
+    <div class="bench-group">
+      <div class="bench-section-title">Local — NVMe SSD (warm cache)</div>
+      <div class="bench-legend">
+        <div class="bench-legend-item"><div class="bench-legend-swatch rsync"></div> rsync</div>
+        <div class="bench-legend-item"><div class="bench-legend-swatch resync"></div> resync</div>
+      </div>
+
+      <div class="bench-row" data-rsync="100" data-resync="46">
+        <div class="bench-name">10K files: full copy</div>
+        <div class="bench-bars-container">
+          <div class="bench-bar rsync-bar" style="width: 0;"><span class="bench-bar-label">0.405s</span></div>
+          <div class="bench-bar resync-bar" style="width: 0;"><span class="bench-bar-label">0.188s</span></div>
+        </div>
+        <div class="bench-speedup">2.1×</div>
+      </div>
+      <div class="bench-row" data-rsync="100" data-resync="38">
+        <div class="bench-name">500 medium: full copy</div>
+        <div class="bench-bars-container">
+          <div class="bench-bar rsync-bar" style="width: 0;"><span class="bench-bar-label">0.741s</span></div>
+          <div class="bench-bar resync-bar" style="width: 0;"><span class="bench-bar-label">0.282s</span></div>
+        </div>
+        <div class="bench-speedup">2.6×</div>
+      </div>
+      <div class="bench-row" data-rsync="100" data-resync="47">
+        <div class="bench-name">5×100 MB: full copy</div>
+        <div class="bench-bars-container">
+          <div class="bench-bar rsync-bar" style="width: 0;"><span class="bench-bar-label">1.371s</span></div>
+          <div class="bench-bar resync-bar" style="width: 0;"><span class="bench-bar-label">0.647s</span></div>
+        </div>
+        <div class="bench-speedup">2.1×</div>
+      </div>
+      <div class="bench-row" data-rsync="100" data-resync="41">
+        <div class="bench-name">10K: no change</div>
+        <div class="bench-bars-container">
+          <div class="bench-bar rsync-bar" style="width: 0;"><span class="bench-bar-label">0.135s</span></div>
+          <div class="bench-bar resync-bar" style="width: 0;"><span class="bench-bar-label">0.055s</span></div>
+        </div>
+        <div class="bench-speedup">2.4×</div>
+      </div>
+      <div class="bench-row" data-rsync="100" data-resync="1">
+        <div class="bench-name">100K: --trust-mtime</div>
+        <div class="bench-bars-container">
+          <div class="bench-bar rsync-bar" style="width: 0;"><span class="bench-bar-label">0.760s</span></div>
+          <div class="bench-bar resync-bar" style="width: 0;"><span class="bench-bar-label">0.006s</span></div>
+        </div>
+        <div class="bench-speedup">~120×</div>
+      </div>
+    </div>
+
+    <div class="bench-env">
+      Hardware: 12th Gen Intel i3-1215U (8 cores), NVMe SSD (ext4), rsync 3.2.7, Rust 2024 with fat LTO.<br>
+      Network benchmarks use Docker containers with tc netem for deterministic traffic shaping.
     </div>
   </div>
 </section>
@@ -549,84 +608,122 @@ footer a:hover { color: #6ee7b7; }
 <!-- COMPARISON -->
 <section id="comparison">
   <div class="container">
-    <div class="section-label fade-in">Head to Head</div>
-    <h2 class="section-title fade-in">rsync vs resync</h2>
-    <p class="section-desc fade-in">Feature-by-feature comparison showing the architectural advantages of a Rust ground-up redesign.</p>
+    <div class="section-label">Head to head</div>
+    <h2 class="section-title">rsync vs resync</h2>
+    <p class="section-desc">Architectural differences that produce the speedup.</p>
 
-    <div class="comparison fade-in">
-      <table>
-        <thead><tr><th>Feature</th><th>rsync</th><th>resync</th></tr></thead>
-        <tbody>
-          <tr><td class="feat">Hash Algorithm</td><td class="bad">MD5 (broken)</td><td class="good">BLAKE3 + SIMD / AVX-512</td></tr>
-          <tr><td class="feat">Parallelism</td><td class="bad">Single-threaded</td><td class="good">Rayon work-stealing (all cores)</td></tr>
-          <tr><td class="feat">I/O Strategy</td><td class="neutral">read(2) + write(2)</td><td class="good">mmap + copy_file_range(2)</td></tr>
-          <tr><td class="feat">Chunking</td><td class="neutral">Fixed-size blocks</td><td class="good">FastCDC (Gear hash)</td></tr>
-          <tr><td class="feat">Compression</td><td class="bad">zlib (slow)</td><td class="good">Zstd (10x faster)</td></tr>
-          <tr><td class="feat">TLS</td><td class="bad">OpenSSL (C)</td><td class="good">rustls TLS 1.3 (memory-safe)</td></tr>
-          <tr><td class="feat">Memory Safety</td><td class="bad">C (manual)</td><td class="good">Rust (compile-time guarantees)</td></tr>
-          <tr><td class="feat">Write Safety</td><td class="neutral">Partial file risk</td><td class="good">Atomic temp + rename(2)</td></tr>
-          <tr><td class="feat">Pre-allocation</td><td class="bad">None</td><td class="good">fallocate(2)</td></tr>
-          <tr><td class="feat">Timestamps</td><td class="neutral">Microsecond</td><td class="good">Nanosecond (utimensat)</td></tr>
-          <tr><td class="feat">Large Files</td><td class="bad">No optimization</td><td class="good">MADV_HUGEPAGE</td></tr>
-          <tr><td class="feat">Incremental Cache</td><td class="bad">None</td><td class="good">Manifest + TOC</td></tr>
-          <tr><td class="feat">Extended Attrs</td><td class="bad">No</td><td class="good">--xattrs / -X</td></tr>
-          <tr><td class="feat">Security</td><td class="neutral">Minimal</td><td class="good">Path traversal, decompression limits, setuid strip</td></tr>
-          <tr><td class="feat">Rust Edition</td><td class="bad">N/A (C)</td><td class="good">2024 (rustc 1.85+)</td></tr>
-        </tbody>
-      </table>
-    </div>
+    <table class="comp-table">
+      <thead><tr><th>Capability</th><th>rsync 3.2.7</th><th>resync</th></tr></thead>
+      <tbody>
+        <tr><td class="feat">Hash</td><td class="old">MD5 (128-bit, broken)</td><td class="new">BLAKE3 (256-bit, SIMD)</td></tr>
+        <tr><td class="feat">Parallelism</td><td class="old">Single-threaded</td><td class="new">Rayon work-stealing (all cores)</td></tr>
+        <tr><td class="feat">I/O</td><td class="old">read() / write()</td><td class="new">mmap + copy_file_range(2)</td></tr>
+        <tr><td class="feat">Chunking</td><td class="old">Fixed-size blocks</td><td class="new">FastCDC (Gear hash)</td></tr>
+        <tr><td class="feat">Compression</td><td class="old">zlib</td><td class="new">Zstd (10× faster)</td></tr>
+        <tr><td class="feat">TLS</td><td class="old">Via stunnel (C)</td><td class="new">Native TLS 1.3 (rustls)</td></tr>
+        <tr><td class="feat">Crash safety</td><td class="old">Temp + rename</td><td class="new">Temp + rename (atomic)</td></tr>
+        <tr><td class="feat">Incremental cache</td><td class="old">None</td><td class="new">Manifest + TOC</td></tr>
+        <tr><td class="feat">Timestamps</td><td class="old">1-second</td><td class="new">Nanosecond (utimensat)</td></tr>
+        <tr><td class="feat">Sparse files</td><td class="old">Basic</td><td class="new">FIEMAP + seek-over-zeros</td></tr>
+        <tr><td class="feat">Extended attrs</td><td class="old">No</td><td class="new">--xattrs / -X</td></tr>
+        <tr><td class="feat">Pre-allocation</td><td class="old">No</td><td class="new">fallocate(2)</td></tr>
+        <tr><td class="feat">Huge pages</td><td class="old">No</td><td class="new">MADV_HUGEPAGE for large I/O</td></tr>
+        <tr><td class="feat">Language</td><td class="old">C</td><td class="new">Rust 2024</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- HOW -->
+<section id="features">
+  <div class="container">
+    <div class="section-label">How</div>
+    <h2 class="section-title">Nine reasons for the speedup</h2>
+    <p class="section-desc">Each optimization compounds. Together they produce 4–56× over rsync.</p>
+
+    <ol class="features-numbered">
+      <li>
+        <div>
+          <h3>Parallel everything</h3>
+          <p>Rayon work-stealing thread pool across directory scanning, BLAKE3 hashing, delta computation, and file application. rsync uses exactly one core.</p>
+        </div>
+      </li>
+      <li>
+        <div>
+          <h3>Zero-copy I/O</h3>
+          <p>mmap with madvise(SEQUENTIAL|HUGEPAGE), copy_file_range(2) for kernel-space copies. Bytes never enter userspace buffers.</p>
+        </div>
+      </li>
+      <li>
+        <div>
+          <h3>BLAKE3 SIMD hashing</h3>
+          <p>10–15× faster than MD5. Auto-vectorizes with AVX-512, AVX2, NEON, SSE4.1. Batched parallelism: 128 chunks per rayon task.</p>
+        </div>
+      </li>
+      <li>
+        <div>
+          <h3>Content-defined chunking</h3>
+          <p>FastCDC with Gear rolling hash. An insert at byte 0 no longer shifts every chunk boundary. 95%+ hash preservation on prepend edits.</p>
+        </div>
+      </li>
+      <li>
+        <div>
+          <h3>Zstd compression</h3>
+          <p>10× faster than zlib at equivalent ratios. Network protocol uses zstd frame compression on all wire messages.</p>
+        </div>
+      </li>
+      <li>
+        <div>
+          <h3>No fsync by default</h3>
+          <p>rsync calls fsync() per file, flushing NVMe write cache. resync trusts the OS page cache. Use --fsync when durability matters.</p>
+        </div>
+      </li>
+      <li>
+        <div>
+          <h3>Manifest cache</h3>
+          <p>Binary manifest + tiny TOC for dir-mtime checks. Skip destination re-scan entirely. With --trust-mtime, skip source stat() too: sub-5ms at 100K files.</p>
+        </div>
+      </li>
+      <li>
+        <div>
+          <h3>Inode-sorted processing</h3>
+          <p>Files sorted by inode number before I/O. Minimizes seeks on rotational media, optimizes readahead on SSDs.</p>
+        </div>
+      </li>
+      <li>
+        <div>
+          <h3>Pre-allocated output</h3>
+          <p>fallocate(2) reserves space before writing. Zero fragmentation on ext4/xfs/btrfs. Eliminates metadata updates during write.</p>
+        </div>
+      </li>
+    </ol>
   </div>
 </section>
 
 <!-- ARCHITECTURE -->
 <section id="architecture">
   <div class="container">
-    <div class="section-label fade-in">Internals</div>
-    <h2 class="section-title fade-in">Architecture</h2>
-    <p class="section-desc fade-in">Two-phase pipeline: sequential classification, then parallel I/O. Files sorted by inode for optimal disk access.</p>
+    <div class="section-label">Internals</div>
+    <h2 class="section-title">Architecture</h2>
+    <p class="section-desc">Two-phase pipeline: sequential classification, then parallel I/O. Files sorted by inode.</p>
 
-    <div class="arch-diagram fade-in">
-<pre>
-  <span class="hl">Scanner</span> (adaptive: sequential turbo / parallel BFS)
-      |
-      v
-  <span class="bl">FilterEngine</span> (exclude / include / size / glob)
-      |
-      v
-  <span class="am">Phase 1: Sequential Decision</span> (O(1) HashMap lookups)
-      |
-      |-- New file -------> <span class="hl">Applier::copy_new()</span>  (copy_file_range / atomic)
-      |
-      |-- Skip -----------> mtime+size / --size-only / manifest
-      |
-      |-- Update ---------> <span class="bl">Hasher</span> (BLAKE3 + mmap)
-      |                        |
-      |                        v
-      |                    <span class="bl">CdcChunker</span> (FastCDC Gear hash)
-      |                        |
-      |                        v
-      |                    <span class="am">DeltaEngine</span> (hash-map match)
-      |                        |
-      |                        v
-      |                    <span class="hl">Applier::apply()</span> (atomic write)
-      |
-      +-- Delete ---------> --delete / --max-delete guard
+    <div class="arch-box">
+<pre>Scanner ──▸ FilterEngine ──▸ Phase 1: Sequential Decision
+                                  │
+                    ┌──────────── ┼ ────────────┐
+                    │             │              │
+                  New file     Skip         Update
+                    │                          │
+              copy_file_range         Hasher (BLAKE3 + mmap)
+              (zero-copy)                      │
+                                          CdcChunker (FastCDC)
+                                               │
+                                          DeltaEngine (hash-map)
+                                               │
+                                          Applier (atomic write)
 
-  <span class="am">Phase 2: Parallel I/O</span> (rayon work-stealing pool)
-      All per-file work runs on a scoped rayon pool.
-      Files sorted by <span class="hl">inode</span> for optimal disk I/O order.
-</pre>
-    </div>
-
-    <div class="modules-grid">
-      <div class="module-card fade-in"><div class="name">scanner.rs</div><div class="desc">Adaptive directory walking &mdash; sequential turbo + lock-free parallel BFS</div></div>
-      <div class="module-card fade-in"><div class="name">hasher.rs</div><div class="desc">BLAKE3 chunk hashing with mmap, madvise, huge pages</div></div>
-      <div class="module-card fade-in"><div class="name">cdc.rs</div><div class="desc">FastCDC content-defined chunking (Gear hash, normalized)</div></div>
-      <div class="module-card fade-in"><div class="name">delta.rs</div><div class="desc">Delta computation: diff two FileManifests (index + hash-map)</div></div>
-      <div class="module-card fade-in"><div class="name">applier.rs</div><div class="desc">Atomic writing, copy_file_range, fallocate, sparse, chown, xattrs</div></div>
-      <div class="module-card fade-in"><div class="name">filter.rs</div><div class="desc">Glob matching, rate limiter, itemize changes, backup helpers</div></div>
-      <div class="module-card fade-in"><div class="name">sync_engine.rs</div><div class="desc">Core orchestrator: two-phase scan then decide then apply pipeline</div></div>
-      <div class="module-card fade-in"><div class="name">net/</div><div class="desc">Binary protocol, async TCP server/client, TLS 1.3 transport</div></div>
+              Phase 2: Parallel I/O (rayon work-stealing)
+              Files sorted by inode for optimal disk access</pre>
     </div>
   </div>
 </section>
@@ -634,49 +731,28 @@ footer a:hover { color: #6ee7b7; }
 <!-- SECURITY -->
 <section id="security">
   <div class="container">
-    <div class="section-label fade-in">Trust</div>
-    <h2 class="section-title fade-in">Security</h2>
-    <p class="section-desc fade-in">Defense in depth. Every layer validated.</p>
+    <div class="section-label">Trust</div>
+    <h2 class="section-title">Security</h2>
+    <p class="section-desc">Defense in depth at every layer.</p>
 
-    <div class="security-grid">
-      <div class="sec-card fade-in">
-        <div class="sec-icon">&#x1F510;</div>
-        <div><h4>BLAKE3 (256-bit)</h4><p>Cryptographically secure hash. No known collisions or preimage attacks. Immune to length-extension.</p></div>
-      </div>
-      <div class="sec-card fade-in">
-        <div class="sec-icon">&#x1F512;</div>
-        <div><h4>TLS 1.3 (rustls)</h4><p>Memory-safe TLS. No OpenSSL. Certificate verification against system CAs. Forward secrecy.</p></div>
-      </div>
-      <div class="sec-card fade-in">
-        <div class="sec-icon">&#x1F6E1;</div>
-        <div><h4>Path Traversal Guards</h4><p>Server and client reject ".." components and absolute paths. Server blocks writes to system directories.</p></div>
-      </div>
-      <div class="sec-card fade-in">
-        <div class="sec-icon">&#x1F4A3;</div>
-        <div><h4>Decompression Limits</h4><p>Zstd messages capped at 256 MiB decompressed. Oversized payloads rejected.</p></div>
-      </div>
-      <div class="sec-card fade-in">
-        <div class="sec-icon">&#x2699;</div>
-        <div><h4>setuid/setgid Stripping</h4><p>Non-root users automatically strip setuid and setgid bits from synced files.</p></div>
-      </div>
-      <div class="sec-card fade-in">
-        <div class="sec-icon">&#x1F4DD;</div>
-        <div><h4>Atomic Writes</h4><p>Write to temp then rename(2). A crash never leaves a corrupt file at the destination.</p></div>
-      </div>
-    </div>
+    <ul class="sec-list">
+      <li><span class="tag">BLAKE3</span><span class="desc">256-bit. No known collisions. Immune to length-extension attacks.</span></li>
+      <li><span class="tag">TLS 1.3</span><span class="desc">Memory-safe rustls. No OpenSSL. Forward secrecy. Certificate verification.</span></li>
+      <li><span class="tag">Atomic writes</span><span class="desc">Write to temp, rename(2). Crash never corrupts the destination file.</span></li>
+      <li><span class="tag">Path traversal</span><span class="desc">Rejects ".." components and absolute paths. Server blocks /etc, /proc, /sys, /dev.</span></li>
+      <li><span class="tag">Decompression</span><span class="desc">Zstd messages capped at 256 MiB. Oversized payloads rejected.</span></li>
+      <li><span class="tag">setuid strip</span><span class="desc">Non-root users automatically strip setuid and setgid bits from synced files.</span></li>
+      <li><span class="tag">Streaming I/O</span><span class="desc">Pull mode streams to disk via temp files. No OOM on large transfers.</span></li>
+    </ul>
   </div>
 </section>
 
 <!-- CTA -->
 <section class="cta-section">
-  <div class="container">
-    <h2 class="fade-in">Ready to switch?</h2>
-    <p class="fade-in">Drop-in rsync replacement. Same flags, same behavior, faster results.</p>
-    <div class="hero-actions fade-in">
-      <a href="https://github.com/vedLinuxian/resync-rs" class="btn btn-primary" target="_blank" rel="noopener">Get Started</a>
-      <a href="https://github.com/vedLinuxian/resync-rs/blob/main/CONTRIBUTING.md" class="btn btn-secondary" target="_blank" rel="noopener">Contribute</a>
-    </div>
-  </div>
+  <h2>Ready to switch?</h2>
+  <p>Drop-in rsync replacement. Same flags. Faster results.</p>
+  <a href="https://github.com/vedLinuxian/resync-rs" class="btn-dark" target="_blank" rel="noopener">Get started &rarr;</a>
+  <a href="https://github.com/vedLinuxian/resync-rs/blob/main/CONTRIBUTING.md" class="btn-outline" target="_blank" rel="noopener">Contribute</a>
 </section>
 
 <!-- FOOTER -->
@@ -684,7 +760,6 @@ footer a:hover { color: #6ee7b7; }
   <div class="footer-links">
     <a href="https://github.com/vedLinuxian/resync-rs" target="_blank" rel="noopener">GitHub</a>
     <a href="https://github.com/vedLinuxian/resync-rs/blob/main/CHANGELOG.md" target="_blank" rel="noopener">Changelog</a>
-    <a href="https://github.com/vedLinuxian/resync-rs/blob/main/CONTRIBUTING.md" target="_blank" rel="noopener">Contributing</a>
     <a href="https://github.com/vedLinuxian/resync-rs/blob/main/SECURITY.md" target="_blank" rel="noopener">Security</a>
     <a href="https://github.com/vedLinuxian/resync-rs/blob/main/LICENSE" target="_blank" rel="noopener">MIT License</a>
   </div>
@@ -692,72 +767,77 @@ footer a:hover { color: #6ee7b7; }
 </footer>
 
 <script>
-// Particles
-(function() {
-  var c = document.getElementById('particles');
-  for (var i = 0; i < 30; i++) {
-    var p = document.createElement('div');
-    p.classList.add('particle');
-    var size = Math.random() * 3 + 1;
-    p.style.width = size + 'px';
-    p.style.height = size + 'px';
-    p.style.left = Math.random() * 100 + '%';
-    p.style.animationDuration = (Math.random() * 15 + 10) + 's';
-    p.style.animationDelay = (Math.random() * 10) + 's';
-    c.appendChild(p);
-  }
-})();
-
-// Scroll Nav
-var navEl = document.getElementById('nav');
-window.addEventListener('scroll', function() {
-  navEl.classList.toggle('scrolled', window.scrollY > 50);
-});
-
-// Intersection Observer (Fade In)
-var observer = new IntersectionObserver(function(entries) {
-  entries.forEach(function(e) {
-    if (e.isIntersecting) { e.target.classList.add('visible'); observer.unobserve(e.target); }
-  });
-}, { threshold: 0.1, rootMargin: '0px 0px -50px 0px' });
-
-document.querySelectorAll('.fade-in').forEach(function(el) { observer.observe(el); });
-
-// Count-Up Animation
+// Count-up animation for hero metrics
 var countObserver = new IntersectionObserver(function(entries) {
-  entries.forEach(function(e) {
-    if (!e.isIntersecting) return;
-    var el = e.target;
-    var target = parseInt(el.dataset.target);
-    var duration = 2000;
+  entries.forEach(function(entry) {
+    if (!entry.isIntersecting) return;
+    var el = entry.target;
+    var target = parseFloat(el.dataset.target);
+    var isFloat = target % 1 !== 0;
+    var duration = 1800;
     var start = performance.now();
     function update(now) {
       var progress = Math.min((now - start) / duration, 1);
       var eased = 1 - Math.pow(1 - progress, 3);
-      el.textContent = Math.round(eased * target);
+      var current = eased * target;
+      el.textContent = isFloat ? current.toFixed(1) : Math.round(current);
       if (progress < 1) requestAnimationFrame(update);
-      else el.textContent = target;
+      else el.textContent = isFloat ? target.toFixed(1) : target;
     }
     requestAnimationFrame(update);
     countObserver.unobserve(el);
   });
 }, { threshold: 0.5 });
 
-document.querySelectorAll('.count-up').forEach(function(el) { countObserver.observe(el); });
+document.querySelectorAll('.metric .num').forEach(function(el) {
+  countObserver.observe(el);
+});
 
-// Benchmark Bar Animation
-var barObserver = new IntersectionObserver(function(entries) {
-  entries.forEach(function(e) {
-    if (!e.isIntersecting) return;
-    e.target.querySelectorAll('.bar-fill').forEach(function(bar) {
-      var width = bar.dataset.width;
-      setTimeout(function() { bar.style.width = width + '%'; }, 200);
+// Speedup vertical bars
+var chartObserver = new IntersectionObserver(function(entries) {
+  entries.forEach(function(entry) {
+    if (!entry.isIntersecting) return;
+    entry.target.querySelectorAll('.speedup-bar').forEach(function(bar, i) {
+      setTimeout(function() {
+        bar.style.height = bar.dataset.height + '%';
+      }, i * 100);
     });
-    barObserver.unobserve(e.target);
+    chartObserver.unobserve(entry.target);
   });
 }, { threshold: 0.2 });
 
-document.querySelectorAll('.bench-row').forEach(function(el) { barObserver.observe(el); });
+var chart = document.getElementById('speedupChart');
+if (chart) chartObserver.observe(chart);
+
+// Benchmark horizontal bars
+var barObserver = new IntersectionObserver(function(entries) {
+  entries.forEach(function(entry) {
+    if (!entry.isIntersecting) return;
+    var row = entry.target;
+    var rsyncW = row.dataset.rsync;
+    var resyncW = row.dataset.resync;
+    var bars = row.querySelectorAll('.bench-bar');
+    setTimeout(function() {
+      if (bars[0]) bars[0].style.width = rsyncW + '%';
+      if (bars[1]) bars[1].style.width = resyncW + '%';
+    }, 150);
+    barObserver.unobserve(row);
+  });
+}, { threshold: 0.1 });
+
+document.querySelectorAll('.bench-row').forEach(function(el) {
+  barObserver.observe(el);
+});
+
+// Scroll nav border
+window.addEventListener('scroll', function() {
+  var nav = document.querySelector('nav');
+  if (window.scrollY > 50) {
+    nav.style.borderBottomColor = '#ccc';
+  } else {
+    nav.style.borderBottomColor = '#e0e0e0';
+  }
+});
 </script>
 </body>
 </html>

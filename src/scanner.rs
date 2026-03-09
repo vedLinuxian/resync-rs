@@ -465,6 +465,9 @@ impl Scanner {
         use std::os::unix::fs::MetadataExt;
 
         let mut result = ScanResult::default();
+        let estimated_files: usize = cache.files_by_dir.values().map(|v| v.len()).sum();
+        result.files.reserve(estimated_files);
+        result.dirs.reserve(cache.dir_mtimes.len());
 
         // BFS over directories — but for each dir, check mtime before scanning
         let mut queue: Vec<(PathBuf, PathBuf)> = vec![(self.root.clone(), PathBuf::new())];

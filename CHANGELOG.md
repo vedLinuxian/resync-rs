@@ -5,6 +5,48 @@ All notable changes to resync-rs will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0-beta.1] - 2025-07-17
+
+### Added
+
+- **Content-Defined Chunking on network path** — server and client now use
+  `Hasher::with_cdc()` for network delta computation. Previously the network
+  path used fixed-size chunks, causing the "shift-byte problem": inserting
+  one byte at position 0 would invalidate every chunk and force full
+  retransmission. CDC preserves 95%+ of chunk hashes on prepend edits.
+- **Hash-set delta matching** — `compute_network_delta()` now uses a
+  `HashSet<Hash256>` for O(1) lookups instead of index-based comparison,
+  correctly identifying unchanged chunks regardless of position.
+- **`--energy-saved` flag** — prints CPU-seconds saved, watt-hours, and
+  kg CO₂ avoided compared to an equivalent rsync run.
+- **Docker network benchmarks** — new `bench/docker_network_benchmark.sh`
+  and `bench/Dockerfile.network` for reproducible, isolated network
+  benchmarks with `tc netem` traffic shaping (WAN/LAN/Slow profiles).
+- **Page cache eviction** — `posix_fadvise(DONTNEED)` after O_DIRECT
+  reads to avoid polluting the page cache during large syncs.
+- **Parallel deletes** — `--delete` now runs deletions on the rayon pool.
+- **Stack buffer for tiny files** — files ≤ 8 KB use a stack-allocated
+  buffer instead of mmap, avoiding kernel overhead for small I/O.
+
+### Performance
+
+- **LAN (1 Gbps):** 4.6× geometric mean over rsync 3.2.7
+  - Compressible data: 55.7×
+  - Incremental sync: 11.8×
+  - No-change: 12.2×
+- **WAN (50 Mbps, 40 ms RTT, 0.5% loss):** 4.2× geometric mean
+  - Compressible data: 56.0×
+  - No-change: 15.6×
+  - Incremental sync: 12.5×
+- **Local NVMe:** 2.1–2.6× full copy, ~120× with --trust-mtime
+
+### Fixed
+
+- Network delta used fixed-size chunks instead of CDC (critical correctness
+  and performance bug for network transfers).
+- Client delta comparison used index-based matching that missed reordered
+  chunks.
+
 ## [0.3.0] - 2025-07-16
 
 ### Added
